@@ -1,15 +1,16 @@
 import React from 'react';
-import { 
-  FileCode, Sparkles, Search, ShoppingBag, ShieldCheck, Star, 
-  MapPin, Phone, HelpCircle, Layers, Image as ImageIcon, CheckCircle, AlertTriangle 
+import {
+  FileCode, Sparkles, Search, ShoppingBag, ShieldCheck, Star,
+  MapPin, Phone, HelpCircle, Layers, Image as ImageIcon, CheckCircle, AlertTriangle
 } from 'lucide-react';
+import { safeHostname } from '../utils/url';
 
 /**
  * Visual Mockup & Illustration Component for Each Audit Checklist Item
  * Helps non-technical stakeholders instantly understand what the issue looks like visually.
  */
 export default function IssueVisualMockup({ itemId, item, siteUrl }) {
-  const domain = siteUrl ? new URL(siteUrl).hostname : 'magazaniz.com';
+  const domain = safeHostname(siteUrl, 'magazaniz.com');
 
   switch (itemId) {
     case 'page_404':

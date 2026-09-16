@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Share2, Smartphone, Monitor, AlertCircle, CheckCircle, Image, FileText, Code2, Globe } from 'lucide-react';
+import { safeHostname } from '../utils/url';
 
 export default function SeoAuditTab({ results }) {
   const [serpDevice, setSerpDevice] = useState('desktop'); // 'desktop' | 'mobile'
@@ -9,7 +10,7 @@ export default function SeoAuditTab({ results }) {
   const { checklist, seoDetails, url } = results;
   const metaTitle = checklist.meta_title?.details?.title || 'Sayfa Başlığı Belirtilmemiş';
   const metaDesc = checklist.meta_description?.details?.description || 'Meta açıklama tanımlanmamış. Arama motorları sayfadan rastgele bir metin seçecektir.';
-  const domain = url ? new URL(url).hostname : 'siteniz.com';
+  const domain = safeHostname(url);
   const displayUrl = url ? `${domain} › pre-checkout` : 'https://siteniz.com';
 
   const ogTitle = checklist.social_sharing?.details?.ogTitle || metaTitle;

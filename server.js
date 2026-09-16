@@ -13,6 +13,7 @@ const {
 const codeGenerators = require('./services/codeGenerators');
 const { getBrandSettings, saveBrandSettings } = require('./services/brandSettings');
 const aiInsights = require('./services/aiInsights');
+const { normalizeUrl, looksLikeBotChallenge, compareRenderedVsPlainFetch } = require('./services/urlUtils');
 
 const app = express();
 const PORT = process.env.PORT || 3300;
@@ -32,36 +33,72 @@ app.post('/api/audit/url', async (req, res) => {
       return res.status(400).json({ error: 'Lütfen bir web sitesi adresi (URL) girin.' });
     }
 
+    let normalizedUrl;
+    try {
+      normalizedUrl = normalizeUrl(url);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
     let html = '';
     let additionalData = {};
     let screenshot = null;
+    let finalUrl = normalizedUrl;
+    let botProtectionWarning = null;
 
     if (useChrome && isChromeInstalled()) {
-      // Use Mac's Google Chrome directly
-      const chromeResult = await capturePageWithChrome(url);
-      html = chromeResult.html;
-      screenshot = chromeResult.screenshot;
-      additionalData.speedMetrics = chromeResult.speedMetrics;
+      // Run the headless-Chrome render AND a plain HTTP fetch in parallel — the plain
+      // fetch is needed anyway for robots.txt/sitemap/etc, and doubling as a sanity
+      // check lets us catch sites whose bot-protection serves Chrome a decoy page.
+      const [chromeResult, crawlData] = await Promise.all([
+        capturePageWithChrome(normalizedUrl),
+        crawlSite(normalizedUrl).catch(() => null)
+      ]);
 
-      // Still check robots.txt and sitemap.xml via crawler helpers
-      try {
-        const crawlData = await crawlSite(url);
+      const comparison = crawlData
+        ? compareRenderedVsPlainFetch(chromeResult.html, chromeResult.title, crawlData.html, crawlData.title)
+        : { preferPlainFetch: false, warning: null };
+
+      if (comparison.preferPlainFetch && crawlData) {
+        // The Chrome-rendered page looks like a bot challenge/decoy; the plain fetch
+        // looks like real content, so audit that instead of the fake page.
+        html = crawlData.html;
+        finalUrl = crawlData.finalUrl || normalizedUrl;
+        additionalData.speedMetrics = crawlData.speedMetrics;
+      } else {
+        html = chromeResult.html;
+        finalUrl = chromeResult.finalUrl || normalizedUrl;
+        screenshot = chromeResult.screenshot;
+        additionalData.speedMetrics = chromeResult.speedMetrics;
+      }
+      botProtectionWarning = comparison.warning;
+
+      if (crawlData) {
         additionalData.robotsTxt = crawlData.robotsTxt;
         additionalData.sitemapXml = crawlData.sitemapXml;
         additionalData.llmsTxt = crawlData.llmsTxt;
         additionalData.status404 = crawlData.status404;
         additionalData.thankYou = crawlData.thankYou;
-      } catch (e) {}
+      }
     } else {
-      // Standard fast crawler
-      const crawlData = await crawlSite(url);
+      // Standard fast crawler (no browser rendering available/requested)
+      const crawlData = await crawlSite(normalizedUrl);
       html = crawlData.html;
+      finalUrl = crawlData.finalUrl || normalizedUrl;
       additionalData = crawlData;
+
+      const check = looksLikeBotChallenge(crawlData.html, crawlData.title);
+      if (check.suspected) {
+        botProtectionWarning = `Bu site otomatik istekleri engelliyor olabilir (${check.reasons.join(' ')}). Sonuçlar güvenilir olmayabilir — "Gerçek Chrome ile render et" seçeneğiyle tekrar deneyin veya siteyi tarayıcınızda manuel kontrol edin.`;
+      }
     }
 
-    const auditResult = runAudit(html, url, additionalData);
+    const auditResult = runAudit(html, finalUrl, additionalData);
     if (screenshot) {
       auditResult.screenshot = screenshot;
+    }
+    if (botProtectionWarning) {
+      auditResult.botProtectionWarning = botProtectionWarning;
     }
 
     res.json(auditResult);
@@ -74,12 +111,19 @@ app.post('/api/audit/url', async (req, res) => {
 // 2. Ham HTML Yapıştırma / Dosya Yükleme Endpoint
 app.post('/api/audit/html', (req, res) => {
   try {
-    const { html, url = 'https://siteniz.com' } = req.body;
+    const { html, url } = req.body;
     if (!html || typeof html !== 'string' || html.trim().length === 0) {
       return res.status(400).json({ error: 'Lütfen geçerli bir HTML içeriği gönderin.' });
     }
 
-    const auditResult = runAudit(html, url);
+    let normalizedUrl;
+    try {
+      normalizedUrl = normalizeUrl(url || 'https://siteniz.com');
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    const auditResult = runAudit(html, normalizedUrl);
     res.json(auditResult);
   } catch (err) {
     console.error('Audit HTML Error:', err);
@@ -102,8 +146,9 @@ app.post('/api/audit/compare', async (req, res) => {
 
     const settled = await Promise.allSettled(targets.map(async (t) => {
       const crawlData = await crawlSite(t.url);
-      const auditResult = runAudit(crawlData.html, t.url, crawlData);
-      return { url: t.url, isMain: t.isMain, ...auditResult };
+      const resolvedUrl = crawlData.finalUrl || crawlData.url;
+      const auditResult = runAudit(crawlData.html, resolvedUrl, crawlData);
+      return { url: resolvedUrl, isMain: t.isMain, ...auditResult };
     }));
 
     const sites = settled.map((r, idx) => {

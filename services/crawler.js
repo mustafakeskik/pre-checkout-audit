@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeUrl } = require('./urlUtils');
 
 /**
  * Web Crawler and Asset Checker
@@ -9,10 +10,7 @@ const DEFAULT_TIMEOUT = 12000;
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 PreCheckoutAudit/1.0';
 
 async function crawlSite(targetUrl) {
-  let formattedUrl = targetUrl.trim();
-  if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-    formattedUrl = 'https://' + formattedUrl;
-  }
+  const formattedUrl = normalizeUrl(targetUrl);
 
   const urlObj = new URL(formattedUrl);
   const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
@@ -27,16 +25,25 @@ async function crawlSite(targetUrl) {
     validateStatus: () => true // Do not throw on 4xx/5xx to capture status code
   });
 
-  // 1. Fetch Main Page & Speed
+  // 1. Fetch Main Page & Speed — real TTFB (time to first response byte, via
+  // onDownloadProgress' first tick) instead of a fabricated proportion of total load time.
+  // Note: this is a plain HTTP fetch, NOT a browser render, so it cannot measure true
+  // Core Web Vitals (LCP/CLS/INP) — only server response + download timing.
   const startTime = Date.now();
+  let firstByteAt = null;
   let mainResponse;
   try {
-    mainResponse = await client.get(formattedUrl);
+    mainResponse = await client.get(formattedUrl, {
+      onDownloadProgress: () => {
+        if (firstByteAt === null) firstByteAt = Date.now();
+      }
+    });
   } catch (err) {
     throw new Error(`Hedef siteye erişilemedi: ${err.message}`);
   }
   const loadTime = Date.now() - startTime;
-  const ttfb = loadTime > 300 ? Math.round(loadTime * 0.4) : Math.round(loadTime * 0.6);
+  const ttfb = firstByteAt !== null ? (firstByteAt - startTime) : loadTime;
+  const finalUrl = mainResponse.request?.res?.responseUrl || formattedUrl;
 
   const html = mainResponse.data && typeof mainResponse.data === 'string' ? mainResponse.data : '';
 
@@ -111,12 +118,15 @@ async function crawlSite(targetUrl) {
 
   return {
     url: formattedUrl,
+    finalUrl,
     baseUrl,
     html,
+    title: (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '',
     speedMetrics: {
       loadTime,
       ttfb,
-      score: loadTime < 1500 ? 95 : loadTime < 3000 ? 75 : 45
+      score: loadTime < 1500 ? 95 : loadTime < 3000 ? 75 : 45,
+      source: 'http_fetch' // plain HTTP timing — not a real browser render, no true Core Web Vitals
     },
     robotsTxt: robotsData,
     sitemapXml: sitemapData,

@@ -7,6 +7,7 @@ import SeoAuditTab from './components/SeoAuditTab';
 import FixStudio from './components/FixStudio';
 import ExportReport from './components/ExportReport';
 import CompetitorCompare from './components/CompetitorCompare';
+import ErrorBoundary from './components/ErrorBoundary';
 import { useBrand } from './context/BrandContext';
 import {
   CheckSquare, Search, Wrench, FileDown, AlertCircle, Sparkles, ShoppingBag,
@@ -264,6 +265,16 @@ export default function App() {
         {/* Results View */}
         {results && (
           <div>
+            {results.botProtectionWarning && (
+              <div className="mb-6 bg-[#c77700]/[0.06] border border-[#c77700]/25 rounded-xl p-4 flex items-start space-x-3 text-[#c77700] text-xs no-print">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-0.5">Güvenilirlik Uyarısı</span>
+                  <span>{results.botProtectionWarning}</span>
+                </div>
+              </div>
+            )}
+
             {/* Scorecard Overview (Visible only in interactive dashboard, hidden in print) */}
             <div className="no-print">
               <ScoreCards results={results} />
@@ -332,28 +343,39 @@ export default function App() {
               </button>
             </div>
 
-            {/* Active Tab Content */}
+            {/* Active Tab Content — each wrapped in its own ErrorBoundary so a render
+                crash in one tab (e.g. from a malformed URL) can't blank the whole app. */}
             {activeTab === 'checklist' && (
-              <ChecklistTable
-                checklist={results.checklist}
-                onSelectFixItem={handleSelectFixItem}
-              />
+              <ErrorBoundary key="checklist">
+                <ChecklistTable
+                  checklist={results.checklist}
+                  onSelectFixItem={handleSelectFixItem}
+                />
+              </ErrorBoundary>
             )}
 
             {activeTab === 'seo' && (
-              <SeoAuditTab results={results} />
+              <ErrorBoundary key="seo">
+                <SeoAuditTab results={results} />
+              </ErrorBoundary>
             )}
 
             {activeTab === 'fix_studio' && (
-              <FixStudio results={results} initialTool={selectedFixTool} />
+              <ErrorBoundary key="fix_studio">
+                <FixStudio results={results} initialTool={selectedFixTool} />
+              </ErrorBoundary>
             )}
 
             {activeTab === 'export' && (
-              <ExportReport results={results} />
+              <ErrorBoundary key="export">
+                <ExportReport results={results} />
+              </ErrorBoundary>
             )}
 
             {activeTab === 'compare' && (
-              <CompetitorCompare mainResults={results} />
+              <ErrorBoundary key="compare">
+                <CompetitorCompare mainResults={results} />
+              </ErrorBoundary>
             )}
           </div>
         )}

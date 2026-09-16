@@ -1,4 +1,5 @@
 const cheerio = require('cheerio');
+const urlUtils = require('./urlUtils');
 
 /**
  * Pre-Checkout & SEO Audit Engine
@@ -120,14 +121,7 @@ function runAudit(htmlContent, siteUrl = '', additionalData = {}) {
 }
 
 function safeParseUrl(urlStr) {
-  try {
-    if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
-      urlStr = 'https://' + urlStr;
-    }
-    return new URL(urlStr);
-  } catch (e) {
-    return null;
-  }
+  return urlUtils.safeParseUrl(urlStr);
 }
 
 // 1. 404 Sayfası Denetimi — kademeli puanlama: her alt-kriter nihai puana giriyor
@@ -458,7 +452,11 @@ function auditCheckoutSecurity($, siteUrl) {
   const looksLikeCheckout = /sepet|cart|checkout|odeme|ödeme|siparis|order/.test(path) ||
     /siparişi tamamla|ödemeye geç|proceed to checkout|place order/.test(bodyText);
 
-  const isHttps = !!siteUrl && siteUrl.startsWith('https://');
+  // Parse defensively (normalize) rather than trusting the raw input string's prefix —
+  // the caller is expected to already pass a normalized/final URL, but this guards
+  // against any future caller that doesn't, instead of silently misreporting HTTPS status.
+  const parsedUrl = urlUtils.safeParseUrl(siteUrl);
+  const isHttps = parsedUrl ? parsedUrl.protocol === 'https:' : false;
 
   const hasTrustSignal = /3d\s*secure|3ds\b|güvenli\s*ödeme|secure\s*checkout|ssl\s*sertifika/i.test(bodyText) ||
     $('img[alt*="secure" i], img[alt*="güvenli" i], img[alt*="3d secure" i], [class*="trust-badge" i], [class*="secure-badge" i]').length > 0;
@@ -695,20 +693,30 @@ function auditPageSpeed($, htmlContent, speedMetrics) {
   const htmlSizeKb = (htmlSizeBytes / 1024).toFixed(1);
 
   if (speedMetrics) {
-    const ttfb = speedMetrics.ttfb || 0;
-    const loadTime = speedMetrics.loadTime || 0;
-    const score = speedMetrics.score || (loadTime < 1500 ? 95 : loadTime < 3000 ? 75 : 45);
+    const ttfb = speedMetrics.ttfb ?? 0;
+    const loadTime = speedMetrics.loadTime ?? 0;
+    const score = speedMetrics.score ?? (loadTime < 1500 ? 95 : loadTime < 3000 ? 75 : 45);
+
+    // Name/message are honest about what was actually measured — a plain HTTP fetch
+    // cannot claim Core Web Vitals (LCP/CLS/INP), only real Chrome navigation timing can
+    // get close (and even that isn't full CWV, just TTFB + load duration).
+    const isRealBrowserMeasurement = speedMetrics.source === 'chrome_navigation_timing' || speedMetrics.source === 'chrome_estimate';
+    const name = isRealBrowserMeasurement ? 'Site Hızı (Chrome Performans Ölçümü)' : 'Sunucu Yanıt Süresi (HTTP Ölçümü)';
+    const methodNote = isRealBrowserMeasurement
+      ? 'Gerçek Chrome render süresi ölçüldü (tam Core Web Vitals — LCP/CLS/INP — değil, sayfa yükleme ve TTFB süresidir).'
+      : 'Bu, gerçek bir tarayıcı render süresi değil, düz bir HTTP isteğinin yanıt süresidir. Gerçek render/CWV\'ye yakın ölçüm için "Gerçek Chrome ile render et" seçeneğini kullanın.';
 
     return {
       id: 'page_speed',
-      name: 'Site Hızı (Core Web Vitals)',
+      name,
       category: 'technicalSeo',
       status: score >= 80 ? 'passed' : score >= 50 ? 'warning' : 'failed',
       score: score,
-      message: `Canlı hız ölçümü: TTFB: ${ttfb}ms, Toplam Yüklenme: ${loadTime}ms.`,
+      message: `TTFB: ${ttfb}ms, Toplam Süre: ${loadTime}ms. ${methodNote}`,
       details: {
         ttfb,
         loadTime,
+        measurementSource: speedMetrics.source || 'unknown',
         htmlSizeKb: `${htmlSizeKb} KB`,
         externalScripts: scriptCount,
         stylesheets: styleCount,
@@ -1274,7 +1282,7 @@ function auditImageAltTags($) {
     category: 'technicalSeo',
     status: 'failed',
     score: 30,
-    message: `Kritik: Görsellerin çoğunda alt etiketi eksik (${total} görselde ${missingAlt} alt etiketsiz resim).`,
+    message: `Kritik: Görsellerin çoğunda alt etiketi eksik (${total} görselden ${missingAlt + emptyAlt} tanesinde alt etiketi eksik veya boş — ${missingAlt} tanesinde alt niteliği hiç yok, ${emptyAlt} tanesinde boş).`,
     details: { total, missingAlt, emptyAlt, sample: missingSample },
     recommendation: 'Tüm ürün ve banner görsellerine arama motorlarının anlayacağı alt etiketleri ekleyin.'
   };

@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const { normalizeUrl } = require('./urlUtils');
 
 /**
  * Chrome Browser Integration Manager
@@ -21,10 +22,7 @@ async function capturePageWithChrome(targetUrl, options = {}) {
     throw new Error('Sistemde kurulu Google Chrome bulunamadı (/Applications/Google Chrome.app).');
   }
 
-  let formattedUrl = targetUrl.trim();
-  if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-    formattedUrl = 'https://' + formattedUrl;
-  }
+  const formattedUrl = normalizeUrl(targetUrl);
 
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
@@ -44,7 +42,11 @@ async function capturePageWithChrome(targetUrl, options = {}) {
 
   try {
     const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    // A recent, realistic desktop Chrome UA/fingerprint — headless-looking UAs are a
+    // common trigger for bot-protection systems to serve a decoy/challenge page instead
+    // of real content (see compareRenderedVsPlainFetch in urlUtils for the safety net).
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7' });
 
     const startTime = Date.now();
     try {
@@ -58,9 +60,19 @@ async function capturePageWithChrome(targetUrl, options = {}) {
       }
       console.warn('Page navigation warning (proceeding with rendered DOM):', navErr.message);
     }
+
+    // Best-effort extra wait for content that hydrates after the network-idle signal
+    // (common in SPA storefronts). Never fails the capture if this threshold isn't met.
+    await page.waitForFunction(
+      () => document.body && document.body.innerText && document.body.innerText.trim().length > 200,
+      { timeout: 5000 }
+    ).catch(() => {});
+
     const loadTime = Date.now() - startTime;
 
-    // Extract performance timings
+    // Extract real Navigation Timing API measurements (TTFB, DOM/load duration).
+    // This is genuine browser timing, but note it is still NOT full Core Web Vitals
+    // (no LCP/CLS/INP) — auditEngine labels it accordingly based on `source`.
     const perfTiming = await page.evaluate(() => {
       const nav = performance.getEntriesByType('navigation')[0];
       if (nav) {
@@ -70,26 +82,28 @@ async function capturePageWithChrome(targetUrl, options = {}) {
           duration: Math.round(nav.duration)
         };
       }
-      return {
-        ttfb: 150,
-        domContentLoaded: 800,
-        duration: 1200
-      };
+      return null;
     });
 
     const renderedHtml = await page.content();
     const screenshotBase64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 75 });
     const title = await page.title();
+    const finalUrl = page.url();
+
+    const duration = perfTiming?.duration ?? loadTime;
+    const ttfb = perfTiming?.ttfb ?? Math.round(loadTime * 0.4);
 
     return {
       url: formattedUrl,
+      finalUrl,
       title,
       html: renderedHtml,
       screenshot: `data:image/jpeg;base64,${screenshotBase64}`,
       speedMetrics: {
-        loadTime: perfTiming.duration || loadTime,
-        ttfb: perfTiming.ttfb || Math.round(loadTime * 0.4),
-        score: (perfTiming.duration || loadTime) < 1500 ? 95 : (perfTiming.duration || loadTime) < 3000 ? 75 : 50
+        loadTime: duration,
+        ttfb,
+        score: duration < 1500 ? 95 : duration < 3000 ? 75 : 50,
+        source: perfTiming ? 'chrome_navigation_timing' : 'chrome_estimate'
       }
     };
   } finally {
