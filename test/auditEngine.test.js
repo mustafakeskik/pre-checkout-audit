@@ -1,6 +1,7 @@
 const assert = require('assert');
 const { runAudit } = require('../services/auditEngine');
 const { normalizeUrl, looksLikeBotChallenge } = require('../services/urlUtils');
+const { toUserFacingError } = require('../services/aiInsights');
 
 let passed = 0;
 function test(name, fn) {
@@ -111,6 +112,34 @@ test('a real, content-rich page never gets flagged scoreUnreliable even with a w
   });
   assert.strictEqual(result.scoreUnreliable, undefined);
   assert.strictEqual(typeof result.scores.overall, 'number');
+});
+
+// --- AI error sanitization: never leak provider/model/quota internals to the client ---
+const SENSITIVE_SUBSTRINGS = ['gemini', 'generativelanguage', 'quota', 'billing', 'google', 'flash', 'free_tier'];
+
+test('toUserFacingError produces a clean message for a real Gemini 429 quota error, with no leaked internals', () => {
+  const err = new Error(
+    "You exceeded your current quota, please check your plan and billing details. " +
+    "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, " +
+    "limit: 20, model: gemini-3.6-flash. Please retry in 6.6s."
+  );
+  err.status = 429;
+  const message = toUserFacingError(err);
+  const lower = message.toLowerCase();
+  for (const term of SENSITIVE_SUBSTRINGS) {
+    assert.ok(!lower.includes(term), `sanitized message still leaks "${term}": "${message}"`);
+  }
+  assert.ok(message.length > 0);
+});
+
+test('toUserFacingError handles auth (401/403) and server (5xx) errors without leaking details too', () => {
+  const authErr = new Error('API key not valid. Please pass a valid API key.');
+  authErr.status = 401;
+  assert.ok(!toUserFacingError(authErr).toLowerCase().includes('api key'));
+
+  const serverErr = new Error('Internal error encountered.');
+  serverErr.status = 503;
+  assert.ok(toUserFacingError(serverErr).length > 0);
 });
 
 console.log(`\n${passed} test(s) passed.`);

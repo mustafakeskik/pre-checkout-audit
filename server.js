@@ -173,8 +173,10 @@ app.post('/api/ai/find-competitors', async (req, res) => {
     const result = await aiInsights.findCompetitors(siteInfo);
     res.json(result);
   } catch (err) {
+    // Full detail (provider, model, quota numbers) stays server-side only — the client
+    // gets a clean, user-facing message via toUserFacingError().
     console.error('AI Find Competitors Error:', err);
-    res.status(500).json({ error: err.message || 'Rakip bulma sırasında hata oluştu.' });
+    res.status(err.status === 429 ? 429 : 500).json({ error: aiInsights.toUserFacingError(err) });
   }
 });
 
@@ -189,7 +191,7 @@ app.post('/api/ai/solution-report', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('AI Solution Report Error:', err);
-    res.status(500).json({ error: err.message || 'Çözüm raporu oluşturulurken hata oluştu.' });
+    res.status(err.status === 429 ? 429 : 500).json({ error: aiInsights.toUserFacingError(err) });
   }
 });
 

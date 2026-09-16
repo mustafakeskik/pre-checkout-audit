@@ -9,6 +9,14 @@ const axios = require('axios');
 const MODEL = 'gemini-3.6-flash';
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Google Search grounding needs billing enabled on the Google Cloud project and has
+// its own (very low) free quota, separate from plain generateContent calls. When it's
+// unavailable, every request would otherwise burn a grounding call AND a fallback call
+// each time, doubling quota usage for no benefit. Once it fails, skip it for a cooldown
+// instead of retrying on every single click.
+let groundingDisabledUntil = 0;
+const GROUNDING_COOLDOWN_MS = 10 * 60 * 1000;
+
 function getApiKey() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -81,25 +89,33 @@ Kurallar:
 - Sonucu SADECE şu JSON formatında ver, başka açıklama ekleme:
 [{"name":"Marka Adı","url":"https://gercek-domain.com","reason":"neden rakip olduğuna dair tek cümlelik açıklama"}]`;
 
-  try {
-    const { text, grounded } = await callGemini({ prompt: basePrompt, useGrounding: true });
-    const competitors = extractJson(text);
-    return { competitors, grounded: true, source: 'google_search_grounding' };
-  } catch (err) {
-    // Grounding unavailable (quota/billing/etc.) — fall back to the model's own knowledge.
-    console.warn('Grounded competitor search failed, falling back:', err.message);
-    const { text } = await callGemini({
-      prompt: `${basePrompt}\n\nNot: Canlı arama yapamıyorsun, kendi bilgine dayanarak en isabetli tahminini yap.`,
-      jsonMode: true
-    });
-    const competitors = extractJson(text);
-    return {
-      competitors,
-      grounded: false,
-      source: 'model_knowledge',
-      warning: 'Bu öneriler canlı arama olmadan üretildi (bilinen bir sınırlama). URL\'lerin hâlâ geçerli olduğunu kontrol edip karşılaştırmadan önce doğrulayın.'
-    };
+  const groundingOnCooldown = Date.now() < groundingDisabledUntil;
+
+  if (!groundingOnCooldown) {
+    try {
+      const { text } = await callGemini({ prompt: basePrompt, useGrounding: true });
+      const competitors = extractJson(text);
+      return { competitors, grounded: true, source: 'google_search_grounding' };
+    } catch (err) {
+      // Grounding unavailable (quota/billing/etc.) — fall back to the model's own
+      // knowledge, and skip retrying grounding for a while to avoid burning two
+      // API calls (one guaranteed to fail) per user click.
+      console.warn('Grounded competitor search failed, falling back:', err.message);
+      groundingDisabledUntil = Date.now() + GROUNDING_COOLDOWN_MS;
+    }
   }
+
+  const { text } = await callGemini({
+    prompt: `${basePrompt}\n\nNot: Canlı arama yapamıyorsun, kendi bilgine dayanarak en isabetli tahminini yap.`,
+    jsonMode: true
+  });
+  const competitors = extractJson(text);
+  return {
+    competitors,
+    grounded: false,
+    source: 'model_knowledge',
+    warning: 'Bu öneriler canlı arama olmadan üretildi (bilinen bir sınırlama). URL\'lerin hâlâ geçerli olduğunu kontrol edip karşılaştırmadan önce doğrulayın.'
+  };
 }
 
 /**
@@ -157,7 +173,33 @@ Rapor müşteri-dostu olmalı, teknik jargonu abartmamalı ama somut ve aksiyona
   return { report: text };
 }
 
+/**
+ * Converts a raw Gemini/axios error into a safe, user-facing Turkish message.
+ * Never leaks provider name, model id, quota numbers, or billing details to the
+ * client — those are internal implementation details that (a) are confusing to a
+ * non-technical user and (b) are exactly the kind of thing you don't want a public
+ * demo leaking. Full detail is still available via the caller's console.error.
+ */
+function toUserFacingError(err) {
+  const status = err.status || err.response?.status;
+
+  if (status === 429) {
+    return 'Şu anda çok fazla istek var, lütfen birkaç dakika sonra tekrar deneyin.';
+  }
+  if (status === 401 || status === 403) {
+    return 'AI servisine bağlanırken bir yetkilendirme sorunu oluştu. Lütfen daha sonra tekrar deneyin.';
+  }
+  if (status >= 500) {
+    return 'AI servisi şu anda yanıt vermiyor. Lütfen birkaç dakika sonra tekrar deneyin.';
+  }
+  if (err.message?.includes('GEMINI_API_KEY')) {
+    return 'AI özellikleri şu anda yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.';
+  }
+  return 'AI isteği tamamlanamadı. Lütfen tekrar deneyin.';
+}
+
 module.exports = {
   findCompetitors,
-  generateSolutionReport
+  generateSolutionReport,
+  toUserFacingError
 };

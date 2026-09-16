@@ -84,6 +84,18 @@ export default function CompetitorCompare({ mainResults }) {
   const [reportError, setReportError] = useState(null);
   const [report, setReport] = useState(null);
 
+  const handleMainUrlChange = (value) => {
+    setMainUrl(value);
+    // The AI's previous suggestions/warning were generated for the OLD site — leaving
+    // them on screen while the user edits this field makes it look like the AI ignored
+    // the change and re-suggested the same competitors, when really it never re-ran.
+    if (aiSuggestions || aiWarning || aiError) {
+      setAiSuggestions(null);
+      setAiWarning(null);
+      setAiError(null);
+    }
+  };
+
   const updateCompetitor = (idx, value) => {
     const next = [...competitorUrls];
     next[idx] = value;
@@ -219,7 +231,7 @@ export default function CompetitorCompare({ mainResults }) {
           <input
             type="text"
             value={mainUrl}
-            onChange={(e) => setMainUrl(e.target.value)}
+            onChange={(e) => handleMainUrlChange(e.target.value)}
             placeholder="https://sizinsiteniz.com"
             disabled={loading}
             className="w-full px-3.5 py-2.5 bg-[#f5f5f7] border border-black/10 rounded-xl text-sm text-[#1d1d1f] placeholder-[#86868b] focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
