@@ -68,8 +68,8 @@ export default function ExportReport({ results }) {
             </p>
           </div>
           <div className="text-right">
-            <span className="text-3xl font-black" style={{ color: brand.primaryColor }}>
-              {scores.overall}/100
+            <span className="text-3xl font-black" style={{ color: results.scoreUnreliable ? '#d70015' : brand.primaryColor }}>
+              {results.scoreUnreliable ? 'Hesaplanamadı' : `${scores.overall}/100`}
             </span>
             <span className="block text-[11px] font-bold uppercase tracking-wider text-[#6e6e73]">
               Genel Sağlık Skoru

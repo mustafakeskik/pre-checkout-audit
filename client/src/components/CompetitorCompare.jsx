@@ -197,7 +197,8 @@ export default function CompetitorCompare({ mainResults }) {
     return best;
   };
 
-  const validSites = (sites || []).filter(s => !s.error);
+  const validSites = (sites || []).filter(s => !s.error && !s.scoreUnreliable);
+  const unreliableSites = (sites || []).filter(s => !s.error && s.scoreUnreliable);
   const domainOf = (url) => { try { return new URL(url.startsWith('http') ? url : `https://${url}`).hostname; } catch { return url; } };
 
   return (
@@ -322,6 +323,14 @@ export default function CompetitorCompare({ mainResults }) {
             <div className="bg-[#c77700]/[0.06] border border-[#c77700]/20 rounded-xl p-3 text-xs text-[#c77700] no-print">
               {sites.filter(s => s.error).map((s, i) => (
                 <div key={i}>⚠ {domainOf(s.url)}: {s.error}</div>
+              ))}
+            </div>
+          )}
+
+          {unreliableSites.length > 0 && (
+            <div className="bg-[#d70015]/[0.06] border border-[#d70015]/20 rounded-xl p-3 text-xs text-[#d70015] no-print">
+              {unreliableSites.map((s, i) => (
+                <div key={i}>⚠ {domainOf(s.url)}: Skor hesaplanamadı, karşılaştırmadan hariç tutuldu — {s.reliabilityWarning}</div>
               ))}
             </div>
           )}

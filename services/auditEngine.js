@@ -117,6 +117,17 @@ function runAudit(htmlContent, siteUrl = '', additionalData = {}) {
   // Puanları Hesapla
   calculateScores(results);
 
+  // Sonuç makul mü? (kök nedenden bağımsız güvenlik ağı)
+  // Bot koruması / WAF, headless tarayıcı ile aynı sunucudan atılan düz HTTP isteğini de
+  // engelleyebilir (ör. barındırma sağlayıcısının datacenter IP'sini itibar bazlı
+  // engellemesi) — bu durumda chrome-render ile plain-fetch karşılaştırması işe yaramaz
+  // çünkü ikisi de aynı (yanlış) sayfayı görür. Bu yüzden burada, HTML kaynağından
+  // bağımsız olarak, hesaplanan checklist sonucunun yapısal olarak makul olup
+  // olmadığını kontrol ediyoruz: gerçek, aktif bir e-ticaret ana sayfasının aynı anda
+  // sıfır iç link + sıfır görsel + meta açıklaması yok + hiç schema yok olması
+  // pratikte neredeyse imkansızdır.
+  assessResultPlausibility(results);
+
   return results;
 }
 
@@ -1845,6 +1856,43 @@ function calculateScores(results) {
     (results.scores.conversionUx * 0.15) +
     (results.scores.accessibility * 0.2)
   );
+}
+
+// Yapısal olarak imkansıza yakın bir kombinasyon tespit edilirse (ör. sıfır iç link +
+// sıfır görsel + meta açıklaması yok + hiç schema yok), taranan HTML muhtemelen gerçek
+// site değil — bir bot koruması/WAF decoy sayfası, yanlış yönlendirme veya sessizce
+// yutulmuş bir hata sonucu boş bırakılmış bir gövde. Bu durumda skoru güvenilir gibi
+// sunmak, hiç sonuç üretmemekten daha kötüdür: skoru "hesaplanamadı" olarak işaretleyip
+// kullanıcıyı açıkça uyarıyoruz.
+function assessResultPlausibility(results) {
+  const internalCount = results.checklist.internal_linking?.details?.internalCount ?? null;
+  const imageCount = results.checklist.image_alt_tags?.details?.total ?? null;
+  const hasMetaDescription = !!(results.checklist.meta_description?.details?.description);
+  const schemaCount = results.checklist.google_rich_snippets?.details?.schemas?.length ?? 0;
+  const hasRobotsTxt = results.checklist.robots_txt?.status !== 'failed';
+  const hasSitemap = results.checklist.sitemap_xml?.status !== 'failed';
+
+  const redFlags = [];
+  if (internalCount === 0) redFlags.push('sıfır iç link');
+  if (imageCount === 0) redFlags.push('sıfır görsel');
+  if (!hasMetaDescription) redFlags.push('meta açıklama yok');
+  if (schemaCount === 0) redFlags.push('hiç schema.org verisi yok');
+  if (!hasRobotsTxt) redFlags.push('robots.txt erişilemedi');
+  if (!hasSitemap) redFlags.push('sitemap.xml erişilemedi');
+
+  // Tek tek bu bulguların her biri gerçek (ve zayıf) bir sitede de görülebilir — asıl
+  // güçlü sinyal, hepsinin AYNI ANDA görülmesi: gerçek, aktif bir e-ticaret sitesinde
+  // bu kombinasyon pratikte neredeyse hiç olmaz.
+  if (redFlags.length >= 4) {
+    results.scoreUnreliable = true;
+    results.reliabilityWarning =
+      `Bu taramanın sonuçları güvenilir görünmüyor: ${redFlags.join(', ')} aynı anda tespit edildi ` +
+      `(gerçek, aktif bir site için bu kombinasyon son derece olağandışıdır). Site muhtemelen otomatik ` +
+      `tarama isteklerini engelliyor, farklı bir sayfaya yönlendiriyor veya sunucu bu taramayı ` +
+      `barındırma altyapınızın IP adresi üzerinden farklı işliyor olabilir. Skor bu yüzden hesaplanmadı — ` +
+      `siteyi kendi tarayıcınızda manuel kontrol edin veya farklı bir ağdan/sunucudan tekrar deneyin.`;
+    results.scores.overall = null;
+  }
 }
 
 module.exports = {

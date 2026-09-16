@@ -265,7 +265,17 @@ export default function App() {
         {/* Results View */}
         {results && (
           <div>
-            {results.botProtectionWarning && (
+            {results.reliabilityWarning && (
+              <div className="mb-6 bg-[#d70015]/[0.06] border-2 border-[#d70015]/30 rounded-xl p-4 flex items-start space-x-3 text-[#d70015] text-xs no-print">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-0.5">Skor Hesaplanamadı — Sonuçlar Güvenilir Değil</span>
+                  <span>{results.reliabilityWarning}</span>
+                </div>
+              </div>
+            )}
+
+            {!results.reliabilityWarning && results.botProtectionWarning && (
               <div className="mb-6 bg-[#c77700]/[0.06] border border-[#c77700]/25 rounded-xl p-4 flex items-start space-x-3 text-[#c77700] text-xs no-print">
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
                 <div>

@@ -4,9 +4,16 @@ import { ShieldCheck, AlertTriangle, XCircle, CheckCircle2, TrendingUp, Award, C
 export default function ScoreCards({ results }) {
   if (!results) return null;
 
-  const { scores, summary, url, timestamp } = results;
+  const { scores, summary, url, timestamp, scoreUnreliable } = results;
 
   const getScoreBadge = (score) => {
+    if (score === null || score === undefined) {
+      return {
+        label: 'Skor Hesaplanamadı',
+        color: 'text-[#6e6e73] bg-black/[0.04] border-black/10',
+        barColor: 'bg-black/20'
+      };
+    }
     if (score >= 85) {
       return {
         label: 'Yayına & Satışa Hazır',
@@ -71,9 +78,9 @@ export default function ScoreCards({ results }) {
 
             <div className="flex items-baseline space-x-3 my-4">
               <span className="text-6xl font-black tracking-tight text-[#1d1d1f]">
-                {scores.overall}
+                {scoreUnreliable ? '—' : scores.overall}
               </span>
-              <span className="text-2xl font-bold text-[#86868b]">/ 100</span>
+              {!scoreUnreliable && <span className="text-2xl font-bold text-[#86868b]">/ 100</span>}
             </div>
 
             <div className={`inline-flex items-center text-xs font-semibold px-3 py-1.5 rounded-full border ${overallBadge.color} mb-6`}>

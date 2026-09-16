@@ -83,4 +83,34 @@ test('looksLikeBotChallenge does not flag a real, long page just because it embe
   assert.strictEqual(check.suspected, false, `expected NOT suspected, got reasons: ${JSON.stringify(check.reasons)}`);
 });
 
+// --- Structural-implausibility safety net (catches the dr.com.tr-on-Render case:
+// a decoy/wrong page served to the scraping server's IP, with no obvious "captcha"
+// text pattern to catch it) ---
+test('a decoy page with zero links/images/meta/schema gets scoreUnreliable=true and a null overall score, regardless of WHY the HTML is wrong', () => {
+  const decoyHtml = '<html><head><title>Sizin İçin Çalışıyoruz</title></head><body><p>Kısa bir mesaj.</p></body></html>';
+  const result = runAudit(decoyHtml, 'https://www.dr.com.tr/', {
+    robotsTxt: { exists: false, content: null },
+    sitemapXml: { exists: false, url: null, content: null }
+  });
+  assert.strictEqual(result.scoreUnreliable, true);
+  assert.strictEqual(result.scores.overall, null);
+  assert.ok(result.reliabilityWarning && result.reliabilityWarning.length > 0);
+});
+
+test('a real, content-rich page never gets flagged scoreUnreliable even with a weak spot or two', () => {
+  const goodHtml = `<html><head><title>D&R</title>
+    <meta name="description" content="Kültür sanat ve eğlence ürünleri.">
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"D&R"}</script>
+    </head><body>
+    ${Array.from({ length: 20 }, (_, i) => `<a href="/kategori-${i}">Kategori ${i}</a>`).join('')}
+    ${Array.from({ length: 10 }, (_, i) => `<img src="urun${i}.jpg" alt="Ürün ${i}">`).join('')}
+    </body></html>`;
+  const result = runAudit(goodHtml, 'https://www.dr.com.tr/', {
+    robotsTxt: { exists: true, content: 'User-agent: *' },
+    sitemapXml: { exists: true, url: 'https://www.dr.com.tr/sitemap.xml', content: '<urlset><url><loc>x</loc></url></urlset>' }
+  });
+  assert.strictEqual(result.scoreUnreliable, undefined);
+  assert.strictEqual(typeof result.scores.overall, 'number');
+});
+
 console.log(`\n${passed} test(s) passed.`);
