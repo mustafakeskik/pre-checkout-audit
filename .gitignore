@@ -1,0 +1,9 @@
+node_modules/
+client/node_modules/
+.env
+.env.local
+client/dist/
+*.log
+brand-settings.json
+.DS_Store
+client/.DS_Store
