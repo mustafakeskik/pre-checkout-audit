@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeUrl } = require('./urlUtils');
 
 /**
  * Gemini-powered AI features:
@@ -57,6 +58,52 @@ async function callGemini({ prompt, useGrounding = false, jsonMode = false }) {
   return { text, grounded };
 }
 
+const VERIFY_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/**
+ * Checks whether a domain actually resolves/responds at all — not whether the page
+ * content is "good", just whether it exists. `validateStatus: () => true` means axios
+ * only throws on genuine network-level failures (DNS not found, connection refused,
+ * timeout, TLS failure) — any HTTP response at all (even 403/404/500) still proves the
+ * domain is real, so it's treated as reachable.
+ */
+async function isDomainReachable(rawUrl) {
+  let normalized;
+  try {
+    normalized = normalizeUrl(rawUrl);
+  } catch {
+    return false;
+  }
+  try {
+    await axios.head(normalized, {
+      timeout: 6000,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      headers: { 'User-Agent': VERIFY_USER_AGENT }
+    });
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Verifies every AI-suggested competitor domain actually exists before it's ever shown
+ * to the user — Gemini occasionally hallucinates a plausible-sounding but non-existent
+ * domain (confirmed in testing: "muzemagaza.com" returned NXDOMAIN) and would otherwise
+ * present it with a confident, specific-sounding description. Runs all checks in
+ * parallel so the extra step doesn't meaningfully slow the response down.
+ */
+async function verifyCompetitors(competitors) {
+  const list = Array.isArray(competitors) ? competitors : [];
+  const checks = await Promise.all(
+    list.map(async (c) => ({ competitor: c, reachable: c && c.url ? await isDomainReachable(c.url) : false }))
+  );
+  const verified = checks.filter(c => c.reachable).map(c => c.competitor);
+  const dropped = checks.filter(c => !c.reachable).map(c => c.competitor);
+  return { verified, dropped };
+}
+
 function extractJson(text) {
   const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const jsonText = fencedMatch ? fencedMatch[1] : text;
@@ -90,12 +137,12 @@ Kurallar:
 [{"name":"Marka Adı","url":"https://gercek-domain.com","reason":"neden rakip olduğuna dair tek cümlelik açıklama"}]`;
 
   const groundingOnCooldown = Date.now() < groundingDisabledUntil;
+  let rawResult;
 
   if (!groundingOnCooldown) {
     try {
       const { text } = await callGemini({ prompt: basePrompt, useGrounding: true });
-      const competitors = extractJson(text);
-      return { competitors, grounded: true, source: 'google_search_grounding' };
+      rawResult = { competitors: extractJson(text), grounded: true, source: 'google_search_grounding' };
     } catch (err) {
       // Grounding unavailable (quota/billing/etc.) — fall back to the model's own
       // knowledge, and skip retrying grounding for a while to avoid burning two
@@ -105,16 +152,35 @@ Kurallar:
     }
   }
 
-  const { text } = await callGemini({
-    prompt: `${basePrompt}\n\nNot: Canlı arama yapamıyorsun, kendi bilgine dayanarak en isabetli tahminini yap.`,
-    jsonMode: true
-  });
-  const competitors = extractJson(text);
+  if (!rawResult) {
+    const { text } = await callGemini({
+      prompt: `${basePrompt}\n\nNot: Canlı arama yapamıyorsun, kendi bilgine dayanarak en isabetli tahminini yap.`,
+      jsonMode: true
+    });
+    rawResult = {
+      competitors: extractJson(text),
+      grounded: false,
+      source: 'model_knowledge',
+      warning: 'Bu öneriler canlı arama olmadan üretildi (bilinen bir sınırlama). URL\'lerin hâlâ geçerli olduğunu kontrol edip karşılaştırmadan önce doğrulayın.'
+    };
+  }
+
+  // Never show a domain the AI may have hallucinated — verify each one actually
+  // resolves before it's presented to the user (see verifyCompetitors() above).
+  const { verified, dropped } = await verifyCompetitors(rawResult.competitors);
+
+  let warning = rawResult.warning || null;
+  if (dropped.length > 0) {
+    const droppedNames = dropped.map(c => c.name || c.url).join(', ');
+    const droppedNote = `AI ${dropped.length} öneri daha üretti ama bunlar gerçek bir siteye çözümlenemediği için listeden çıkarıldı (muhtemelen AI'nin uydurduğu, var olmayan domain): ${droppedNames}.`;
+    warning = warning ? `${warning} ${droppedNote}` : droppedNote;
+  }
+
   return {
-    competitors,
-    grounded: false,
-    source: 'model_knowledge',
-    warning: 'Bu öneriler canlı arama olmadan üretildi (bilinen bir sınırlama). URL\'lerin hâlâ geçerli olduğunu kontrol edip karşılaştırmadan önce doğrulayın.'
+    ...rawResult,
+    competitors: verified,
+    droppedCount: dropped.length,
+    warning
   };
 }
 
@@ -201,5 +267,7 @@ function toUserFacingError(err) {
 module.exports = {
   findCompetitors,
   generateSolutionReport,
-  toUserFacingError
+  toUserFacingError,
+  isDomainReachable,
+  verifyCompetitors
 };
