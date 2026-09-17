@@ -14,6 +14,7 @@ const codeGenerators = require('./services/codeGenerators');
 const { getBrandSettings, saveBrandSettings } = require('./services/brandSettings');
 const aiInsights = require('./services/aiInsights');
 const { normalizeUrl, looksLikeBotChallenge, compareRenderedVsPlainFetch } = require('./services/urlUtils');
+const historyStore = require('./services/historyStore');
 
 const app = express();
 const PORT = process.env.PORT || 3300;
@@ -25,10 +26,46 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Static frontend serve
 app.use(express.static(path.join(__dirname, 'client/dist')));
 
+/**
+ * Records a completed audit into history and attaches trend (vs. this domain's
+ * previous scan) and sector-average comparison data to the result before it's
+ * sent to the client. Centralized here so every audit entry point (URL scan,
+ * HTML paste, compare tool) behaves identically.
+ */
+function enrichWithHistory(auditResult, sector) {
+  const detectedSector = sector || historyStore.detectSector(
+    `${auditResult.checklist?.meta_title?.details?.title || ''} ${auditResult.checklist?.meta_description?.details?.description || ''}`
+  );
+
+  const previous = historyStore.getPreviousScan(auditResult.url, auditResult.timestamp);
+  historyStore.recordScan(auditResult, detectedSector);
+  const sectorComparison = historyStore.getSectorAverage(detectedSector, auditResult.url);
+
+  auditResult.sector = detectedSector;
+  if (previous) {
+    auditResult.trend = {
+      previousScanAt: previous.scanned_at,
+      previous: {
+        overall: previous.overall_score,
+        preCheckout: previous.precheckout_score,
+        technicalSeo: previous.technical_seo_score,
+        legalTrust: previous.legal_trust_score,
+        conversionUx: previous.conversion_ux_score,
+        accessibility: previous.accessibility_score
+      },
+      deltaOverall: auditResult.scores.overall !== null && previous.overall_score !== null
+        ? auditResult.scores.overall - previous.overall_score
+        : null
+    };
+  }
+  auditResult.sectorComparison = sectorComparison;
+  return auditResult;
+}
+
 // 1. Canlı URL Taraması Endpoint
 app.post('/api/audit/url', async (req, res) => {
   try {
-    const { url, useChrome } = req.body;
+    const { url, useChrome, sector } = req.body;
     if (!url) {
       return res.status(400).json({ error: 'Lütfen bir web sitesi adresi (URL) girin.' });
     }
@@ -100,6 +137,7 @@ app.post('/api/audit/url', async (req, res) => {
     if (botProtectionWarning) {
       auditResult.botProtectionWarning = botProtectionWarning;
     }
+    enrichWithHistory(auditResult, sector);
 
     res.json(auditResult);
   } catch (err) {
@@ -111,7 +149,7 @@ app.post('/api/audit/url', async (req, res) => {
 // 2. Ham HTML Yapıştırma / Dosya Yükleme Endpoint
 app.post('/api/audit/html', (req, res) => {
   try {
-    const { html, url } = req.body;
+    const { html, url, sector } = req.body;
     if (!html || typeof html !== 'string' || html.trim().length === 0) {
       return res.status(400).json({ error: 'Lütfen geçerli bir HTML içeriği gönderin.' });
     }
@@ -124,6 +162,7 @@ app.post('/api/audit/html', (req, res) => {
     }
 
     const auditResult = runAudit(html, normalizedUrl);
+    enrichWithHistory(auditResult, sector);
     res.json(auditResult);
   } catch (err) {
     console.error('Audit HTML Error:', err);
@@ -148,6 +187,7 @@ app.post('/api/audit/compare', async (req, res) => {
       const crawlData = await crawlSite(t.url);
       const resolvedUrl = crawlData.finalUrl || crawlData.url;
       const auditResult = runAudit(crawlData.html, resolvedUrl, crawlData);
+      enrichWithHistory(auditResult);
       return { url: resolvedUrl, isMain: t.isMain, ...auditResult };
     }));
 
@@ -214,6 +254,7 @@ app.post('/api/chrome/capture', async (req, res) => {
     const auditResult = runAudit(pageData.html, pageData.url);
     auditResult.screenshot = pageData.screenshot;
     auditResult.interactive = true;
+    enrichWithHistory(auditResult, req.body?.sector);
     res.json(auditResult);
   } catch (err) {
     console.error('Chrome Capture Error:', err);
@@ -343,6 +384,21 @@ app.get('/api/health', (req, res) => {
 // Gemini çağrısı yapıyor ve kotayı ne sıklıkla tüketiyor görmek için)
 app.get('/api/ai/usage-stats', (req, res) => {
   res.json(aiInsights.getUsageStats());
+});
+
+// 9. Domain Geçmişi (trend takibi için)
+app.get('/api/history', (req, res) => {
+  const { url } = req.query;
+  if (!url) {
+    return res.status(400).json({ error: 'url query parametresi gerekli.' });
+  }
+  const history = historyStore.getHistoryForDomain(url);
+  res.json({ domain: historyStore.domainKey(url), scans: history });
+});
+
+// 10. Sektör Listesi (dropdown için)
+app.get('/api/sectors', (req, res) => {
+  res.json({ sectors: historyStore.SECTORS });
 });
 
 // Fallback SPA

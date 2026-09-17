@@ -5,5 +5,7 @@ client/node_modules/
 client/dist/
 *.log
 brand-settings.json
+history.db
+history.db-*
 .DS_Store
 client/.DS_Store

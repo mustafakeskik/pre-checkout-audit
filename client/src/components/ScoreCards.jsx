@@ -1,10 +1,10 @@
 import React from 'react';
-import { ShieldCheck, AlertTriangle, XCircle, CheckCircle2, TrendingUp, Award, Clock, ExternalLink, Accessibility } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, XCircle, CheckCircle2, TrendingUp, TrendingDown, Minus, Award, Clock, ExternalLink, Accessibility, Tag, BarChart3 } from 'lucide-react';
 
 export default function ScoreCards({ results }) {
   if (!results) return null;
 
-  const { scores, summary, url, timestamp, scoreUnreliable } = results;
+  const { scores, summary, url, timestamp, scoreUnreliable, trend, sector, sectorComparison } = results;
 
   const getScoreBadge = (score) => {
     if (score === null || score === undefined) {
@@ -61,6 +61,44 @@ export default function ScoreCards({ results }) {
           <span>{summary.total} Kontrol Maddesi Tamamlandı</span>
         </div>
       </div>
+
+      {/* Trend & Sector Comparison Strip */}
+      {(trend || sector) && (
+        <div className="flex flex-wrap items-center gap-3">
+          {trend && trend.deltaOverall !== null && (
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+              trend.deltaOverall > 0 ? 'bg-[#1d9a4e]/10 text-[#1d9a4e] border-[#1d9a4e]/20' :
+              trend.deltaOverall < 0 ? 'bg-[#d70015]/10 text-[#d70015] border-[#d70015]/20' :
+              'bg-black/[0.04] text-[#6e6e73] border-black/10'
+            }`}>
+              {trend.deltaOverall > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : trend.deltaOverall < 0 ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+              <span>
+                Önceki: {trend.previous.overall ?? '—'}/100 ({new Date(trend.previousScanAt).toLocaleDateString('tr-TR')}) → Şimdi: {scores.overall}/100
+                {' '}({trend.deltaOverall > 0 ? '+' : ''}{trend.deltaOverall})
+              </span>
+            </div>
+          )}
+
+          {sector && sectorComparison && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0071e3]/[0.08] text-[#0071e3] border border-[#0071e3]/20">
+              <Tag className="w-3.5 h-3.5" />
+              {sectorComparison.insufficientData ? (
+                <span>{sector}: Henüz yeterli karşılaştırma verisi yok ({sectorComparison.sampleCount}/{sectorComparison.required} denetim)</span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  {sector} Sektör Ortalaması: {sectorComparison.scores.overall}/100
+                  {scores.overall !== null && (
+                    <span className={scores.overall >= sectorComparison.scores.overall ? 'text-[#1d9a4e]' : 'text-[#d70015]'}>
+                      ({scores.overall >= sectorComparison.scores.overall ? '+' : ''}{scores.overall - sectorComparison.scores.overall} sizde)
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main Score Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">

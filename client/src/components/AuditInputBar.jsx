@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Globe, Code, Chrome, ArrowRight, Upload, Play, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Globe, Code, Chrome, ArrowRight, Upload, Play, Loader2, Sparkles, CheckCircle2, Tag } from 'lucide-react';
 
 export default function AuditInputBar({ onAuditUrl, onAuditHtml, onLaunchChrome, onCaptureChrome, loading, chromeSessionActive }) {
   const [activeTab, setActiveTab] = useState('url'); // 'url' | 'html' | 'chrome'
@@ -8,18 +8,42 @@ export default function AuditInputBar({ onAuditUrl, onAuditHtml, onLaunchChrome,
   const [htmlContent, setHtmlContent] = useState('');
   const [companyDomain, setCompanyDomain] = useState('https://sirketim.com');
   const [chromeStartUrl, setChromeStartUrl] = useState('');
+  const [sectors, setSectors] = useState([]);
+  const [sector, setSector] = useState(''); // '' = otomatik algıla
+
+  useEffect(() => {
+    fetch('/api/sectors')
+      .then(res => res.json())
+      .then(data => setSectors(data.sectors || []))
+      .catch(() => {});
+  }, []);
 
   const handleUrlSubmit = (e) => {
     e.preventDefault();
     if (!url.trim()) return;
-    onAuditUrl(url.trim(), useChromeForUrl);
+    onAuditUrl(url.trim(), useChromeForUrl, sector || undefined);
   };
 
   const handleHtmlSubmit = (e) => {
     e.preventDefault();
     if (!htmlContent.trim()) return;
-    onAuditHtml(htmlContent, companyDomain.trim() || 'https://sirketim.com');
+    onAuditHtml(htmlContent, companyDomain.trim() || 'https://sirketim.com', sector || undefined);
   };
+
+  const sectorSelector = (
+    <div className="flex items-center gap-2 text-xs">
+      <Tag className="w-3.5 h-3.5 text-[#86868b]" />
+      <span className="text-[#6e6e73] font-medium">Sektör:</span>
+      <select
+        value={sector}
+        onChange={(e) => setSector(e.target.value)}
+        className="bg-[#f5f5f7] border border-black/10 rounded-lg px-2 py-1 text-[#1d1d1f] text-xs focus:ring-1 focus:ring-[#0071e3]"
+      >
+        <option value="">Otomatik Algıla</option>
+        {sectors.map(s => <option key={s} value={s}>{s}</option>)}
+      </select>
+    </div>
+  );
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -112,7 +136,7 @@ export default function AuditInputBar({ onAuditUrl, onAuditHtml, onLaunchChrome,
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between text-xs text-[#6e6e73] pt-1">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-[#6e6e73] pt-1">
             <label className="flex items-center space-x-2 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -124,9 +148,10 @@ export default function AuditInputBar({ onAuditUrl, onAuditHtml, onLaunchChrome,
                 Gerçek Google Chrome ile render et (Dinamik JS, ekran görüntüsü ve Core Web Vitals analizi)
               </span>
             </label>
-            <span className="text-[#86868b]">
-              * robots.txt, sitemap.xml, 404 testi, LLMS.txt ve 22+ madde otomatik taranır.
-            </span>
+            {sectorSelector}
+          </div>
+          <div className="text-[11px] text-[#86868b]">
+            * robots.txt, sitemap.xml, 404 testi, LLMS.txt ve 26+ madde otomatik taranır.
           </div>
         </form>
       )}
@@ -177,7 +202,8 @@ export default function AuditInputBar({ onAuditUrl, onAuditHtml, onLaunchChrome,
             </div>
           </div>
 
-          <div className="flex justify-end pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            {sectorSelector}
             <button
               type="submit"
               disabled={loading || !htmlContent.trim()}

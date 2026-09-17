@@ -7,11 +7,12 @@ import SeoAuditTab from './components/SeoAuditTab';
 import FixStudio from './components/FixStudio';
 import ExportReport from './components/ExportReport';
 import CompetitorCompare from './components/CompetitorCompare';
+import HistoryTab from './components/HistoryTab';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useBrand } from './context/BrandContext';
 import {
   CheckSquare, Search, Wrench, FileDown, AlertCircle, Sparkles, ShoppingBag,
-  Layers, ArrowRight, ShieldCheck, Zap, Swords
+  Layers, ArrowRight, ShieldCheck, Zap, Swords, History
 } from 'lucide-react';
 
 export default function App() {
@@ -40,14 +41,14 @@ export default function App() {
   };
 
   // 1. Audit Live URL
-  const handleAuditUrl = async (url, useChrome) => {
+  const handleAuditUrl = async (url, useChrome, sector) => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/audit/url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, useChrome })
+        body: JSON.stringify({ url, useChrome, sector })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -64,14 +65,14 @@ export default function App() {
   };
 
   // 2. Audit Raw HTML
-  const handleAuditHtml = async (html, url) => {
+  const handleAuditHtml = async (html, url, sector) => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/audit/html', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, url })
+        body: JSON.stringify({ html, url, sector })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -351,6 +352,18 @@ export default function App() {
                 <Swords className="w-3.5 h-3.5" />
                 <span>Rakip Karşılaştırma</span>
               </button>
+
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-full font-medium text-xs transition-all shrink-0 ${
+                  activeTab === 'history'
+                    ? 'bg-white text-[#1d1d1f] shadow-sm'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Geçmiş</span>
+              </button>
             </div>
 
             {/* Active Tab Content — each wrapped in its own ErrorBoundary so a render
@@ -385,6 +398,12 @@ export default function App() {
             {activeTab === 'compare' && (
               <ErrorBoundary key="compare">
                 <CompetitorCompare mainResults={results} />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === 'history' && (
+              <ErrorBoundary key="history">
+                <HistoryTab results={results} />
               </ErrorBoundary>
             )}
           </div>

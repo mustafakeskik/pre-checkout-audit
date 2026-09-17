@@ -2,6 +2,7 @@ const assert = require('assert');
 const { runAudit } = require('../services/auditEngine');
 const { normalizeUrl, looksLikeBotChallenge } = require('../services/urlUtils');
 const { toUserFacingError, isDomainReachable, verifyCompetitors, parseRetryDelaySeconds } = require('../services/aiInsights');
+const historyStore = require('../services/historyStore');
 
 let passed = 0;
 async function test(name, fn) {
@@ -195,6 +196,85 @@ await test('toUserFacingError gives a concrete wait time when Gemini provides on
   const msg = toUserFacingError(err);
   assert.ok(msg.includes('7') || msg.includes('6'), `expected message to include the actual wait time, got: "${msg}"`);
   assert.ok(!msg.toLowerCase().includes('dakika'), `expected a seconds-based message, not the old vague "minutes" one: "${msg}"`);
+});
+
+// --- historyStore: trend tracking, sector averages, and the "never fabricate from
+// too little data" rule (same principle as the muzemagaza.com fix, applied here) ---
+const TEST_DOMAIN_SUFFIX = `histtest-${Date.now()}`;
+
+await test('domainKey normalizes www/https/path differences to the same bucket', () => {
+  const a = historyStore.domainKey(`https://www.${TEST_DOMAIN_SUFFIX}.com/urun/1`);
+  const b = historyStore.domainKey(`http://${TEST_DOMAIN_SUFFIX}.com`);
+  assert.strictEqual(a, b);
+});
+
+await test('recordScan refuses to store a scoreUnreliable result (garbage data must never enter history)', () => {
+  const domain = `unreliable-${TEST_DOMAIN_SUFFIX}.com`;
+  const fakeResult = {
+    url: `https://${domain}`,
+    timestamp: new Date().toISOString(),
+    scoreUnreliable: true,
+    scores: { overall: null },
+    checklist: {},
+    summary: {}
+  };
+  const id = historyStore.recordScan(fakeResult, 'Genel E-ticaret');
+  assert.strictEqual(id, null);
+  assert.strictEqual(historyStore.getHistoryForDomain(fakeResult.url).length, 0);
+});
+
+await test('recordScan + getPreviousScan: a second scan of the same domain sees the first as its predecessor', () => {
+  const domain = `trend-${TEST_DOMAIN_SUFFIX}.com`;
+  const makeResult = (overall) => ({
+    url: `https://${domain}`,
+    timestamp: new Date().toISOString(),
+    scores: { overall, preCheckout: overall, technicalSeo: overall, legalTrust: overall, conversionUx: overall, accessibility: overall },
+    checklist: { page_404: { status: 'passed' } },
+    summary: { passed: 1, warning: 0, failed: 0 }
+  });
+  historyStore.recordScan(makeResult(40), 'Elektronik');
+  const previous = historyStore.getPreviousScan(`https://${domain}`, new Date(Date.now() + 60000).toISOString());
+  assert.ok(previous, 'expected to find the just-recorded scan as a predecessor');
+  assert.strictEqual(previous.overall_score, 40);
+
+  const history = historyStore.getHistoryForDomain(`https://${domain}`);
+  assert.strictEqual(history.length, 1);
+});
+
+await test('getSectorAverage refuses to compute an average from fewer than 5 distinct domains (never fabricate a "sector average" from one site)', () => {
+  const sector = `test-sector-${TEST_DOMAIN_SUFFIX}`;
+  const domain = `onlyone-${TEST_DOMAIN_SUFFIX}.com`;
+  historyStore.recordScan({
+    url: `https://${domain}`,
+    timestamp: new Date().toISOString(),
+    scores: { overall: 80, preCheckout: 80, technicalSeo: 80, legalTrust: 80, conversionUx: 80, accessibility: 80 },
+    checklist: {},
+    summary: { passed: 1, warning: 0, failed: 0 }
+  }, sector);
+
+  const result = historyStore.getSectorAverage(sector, null);
+  assert.strictEqual(result.insufficientData, true);
+  assert.strictEqual(result.sampleCount, 1);
+  assert.strictEqual(result.required, historyStore.MIN_SECTOR_SAMPLE);
+});
+
+await test('getSectorAverage computes a real average once 5+ distinct domains exist, excluding the comparison domain itself', () => {
+  const sector = `full-sector-${TEST_DOMAIN_SUFFIX}`;
+  // 6 domains recorded so that excluding one (site0, the "self") still leaves 5 —
+  // meeting MIN_SECTOR_SAMPLE.
+  for (let i = 0; i < 6; i++) {
+    historyStore.recordScan({
+      url: `https://site${i}-${TEST_DOMAIN_SUFFIX}.com`,
+      timestamp: new Date().toISOString(),
+      scores: { overall: 60, preCheckout: 60, technicalSeo: 60, legalTrust: 60, conversionUx: 60, accessibility: 60 },
+      checklist: {},
+      summary: { passed: 1, warning: 0, failed: 0 }
+    }, sector);
+  }
+  const result = historyStore.getSectorAverage(sector, `https://site0-${TEST_DOMAIN_SUFFIX}.com`);
+  assert.strictEqual(result.insufficientData, false);
+  assert.strictEqual(result.sampleCount, 5); // site0 excluded, 5 remain
+  assert.strictEqual(result.scores.overall, 60);
 });
 
 console.log(`\n${passed} test(s) passed.`);
