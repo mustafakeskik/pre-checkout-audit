@@ -304,6 +304,28 @@ await test('page_speed never fabricates a score when coreWebVitals measurement f
   assert.ok(result.message.includes('bot korumasına takıldı'), `expected the failure reason surfaced in the message, got: "${result.message}"`);
 });
 
+await test('page_speed does not tell the user to "check that option" when Core Web Vitals WAS attempted but unavailable server-side (regression: Render deployment had no Chrome, but kept telling the user to check a box they already checked)', () => {
+  const html = '<html><body></body></html>';
+  const coreWebVitals = {
+    measured: false,
+    reason: 'Bu sunucuda Core Web Vitals ölçümü için gerekli yerel Google Chrome kurulu değil. Bu özellik yalnızca geliştiricinin kendi bilgisayarında (localhost) çalışır — canlı/deploy edilmiş sunucuda devre dışıdır.'
+  };
+  // This mirrors exactly what happens on Render: useChrome was true but isChromeInstalled()
+  // is false there, so speedMetrics comes from the plain HTTP crawler (source: http_fetch).
+  const speedMetrics = { ttfb: 80, loadTime: 300, score: 90, source: 'http_fetch' };
+  const result = runAudit(html, 'https://cwv-no-chrome-server-test.com', { speedMetrics, coreWebVitals }).checklist.page_speed;
+  assert.ok(!result.message.includes('seçeneğini kullanın'), `message still tells the user to check an option they already checked: "${result.message}"`);
+  assert.ok(result.message.includes('yerel Google Chrome kurulu değil'), `expected the real reason surfaced: "${result.message}"`);
+});
+
+await test('page_speed DOES suggest checking the Chrome option when Core Web Vitals was never even attempted (checkbox genuinely off)', () => {
+  const html = '<html><body></body></html>';
+  const speedMetrics = { ttfb: 80, loadTime: 300, score: 90, source: 'http_fetch' };
+  // No coreWebVitals passed at all — matches the checkbox-off path in server.js.
+  const result = runAudit(html, 'https://cwv-checkbox-off-test.com', { speedMetrics }).checklist.page_speed;
+  assert.ok(result.message.includes('seçeneğini kullanın'), `expected the suggestion to still appear when CWV was never attempted: "${result.message}"`);
+});
+
 await test('page_speed rates a poor LCP/CLS/INP combination as failed with a low score, not a fabricated pass', () => {
   const html = '<html><body></body></html>';
   const coreWebVitals = {

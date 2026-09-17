@@ -129,6 +129,17 @@ app.post('/api/audit/url', async (req, res) => {
       finalUrl = crawlData.finalUrl || normalizedUrl;
       additionalData = crawlData;
 
+      // Distinguish "user didn't ask for Chrome" from "user asked but this server
+      // can't provide it" — these need different messages downstream. Without this,
+      // a Chrome-less deployment (e.g. Render) silently shows the generic "check that
+      // option" hint even when the user already checked it, which is just wrong.
+      if (useChrome && !isChromeInstalled()) {
+        additionalData.coreWebVitals = {
+          measured: false,
+          reason: 'Bu sunucuda Core Web Vitals ölçümü için gerekli yerel Google Chrome kurulu değil. Bu özellik yalnızca geliştiricinin kendi bilgisayarında (localhost) çalışır — canlı/deploy edilmiş sunucuda devre dışıdır.'
+        };
+      }
+
       const check = looksLikeBotChallenge(crawlData.html, crawlData.title);
       if (check.suspected) {
         botProtectionWarning = `Bu site otomatik istekleri engelliyor olabilir (${check.reasons.join(' ')}). Sonuçlar güvenilir olmayabilir — "Gerçek Chrome ile render et" seçeneğiyle tekrar deneyin veya siteyi tarayıcınızda manuel kontrol edin.`;

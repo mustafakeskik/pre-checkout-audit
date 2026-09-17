@@ -760,9 +760,14 @@ function auditPageSpeed($, htmlContent, speedMetrics, coreWebVitals) {
     // get close (and even that isn't full CWV, just TTFB + load duration).
     const isRealBrowserMeasurement = speedMetrics.source === 'chrome_navigation_timing' || speedMetrics.source === 'chrome_estimate';
     const name = isRealBrowserMeasurement ? 'Site Hızı (Chrome Performans Ölçümü)' : 'Sunucu Yanıt Süresi (HTTP Ölçümü)';
+    // Only suggest "check that option" when Core Web Vitals genuinely was never
+    // attempted (coreWebVitals is undefined) — if it WAS attempted (measured or not),
+    // saying "use that option" is actively wrong/confusing, since the user already did.
     const methodNote = isRealBrowserMeasurement
       ? 'Gerçek Chrome render süresi ölçüldü (tam Core Web Vitals — LCP/CLS/INP — değil, sayfa yükleme ve TTFB süresidir).'
-      : 'Bu, gerçek bir tarayıcı render süresi değil, düz bir HTTP isteğinin yanıt süresidir. Gerçek render/CWV\'ye yakın ölçüm için "Gerçek Chrome ile render et" seçeneğini kullanın.';
+      : coreWebVitals
+        ? 'Bu, gerçek bir tarayıcı render süresi değil, düz bir HTTP isteğinin yanıt süresidir.'
+        : 'Bu, gerçek bir tarayıcı render süresi değil, düz bir HTTP isteğinin yanıt süresidir. Gerçek render/CWV\'ye yakın ölçüm için "Gerçek Chrome ile render et" seçeneğini kullanın.';
 
     return {
       id: 'page_speed',
