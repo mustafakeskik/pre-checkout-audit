@@ -18,6 +18,33 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 let groundingDisabledUntil = 0;
 const GROUNDING_COOLDOWN_MS = 10 * 60 * 1000;
 
+// Free-tier quota for this model is a per-minute rate limit (confirmed: 5 requests/min,
+// project+model scoped, NOT a long daily cap) — a short retry after the delay Gemini
+// itself reports is usually enough, since the window rolls over within ~60s.
+const MAX_RETRIES = 2;
+const MIN_RETRY_DELAY_MS = 800;
+const MAX_RETRY_DELAY_MS = 15000;
+
+// In-memory usage tracking so it's visible (via console + getUsageStats) which
+// feature is actually consuming the shared quota, instead of it being a black box.
+const usageStats = {
+  callsByPurpose: {},   // e.g. { competitors_grounded: 4, competitors_fallback: 12, solution_report: 3 }
+  quotaErrorsByPurpose: {},
+  lastQuotaErrorAt: null
+};
+
+function recordUsage(purpose, { quotaError = false } = {}) {
+  usageStats.callsByPurpose[purpose] = (usageStats.callsByPurpose[purpose] || 0) + 1;
+  if (quotaError) {
+    usageStats.quotaErrorsByPurpose[purpose] = (usageStats.quotaErrorsByPurpose[purpose] || 0) + 1;
+    usageStats.lastQuotaErrorAt = new Date().toISOString();
+  }
+}
+
+function getUsageStats() {
+  return JSON.parse(JSON.stringify(usageStats));
+}
+
 function getApiKey() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -26,7 +53,20 @@ function getApiKey() {
   return key;
 }
 
-async function callGemini({ prompt, useGrounding = false, jsonMode = false }) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Reads Google's own suggested wait time out of the 429 response, if present. */
+function parseRetryDelaySeconds(geminiError) {
+  const retryInfo = geminiError?.details?.find(d => d['@type']?.includes('RetryInfo'));
+  const raw = retryInfo?.retryDelay; // e.g. "17.3s" or "0s"
+  if (!raw) return null;
+  const seconds = parseFloat(raw);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+async function callGemini({ prompt, useGrounding = false, jsonMode = false, purpose = 'unspecified' }) {
   const apiKey = getApiKey();
   const body = {
     contents: [{ parts: [{ text: prompt }] }]
@@ -38,24 +78,44 @@ async function callGemini({ prompt, useGrounding = false, jsonMode = false }) {
     body.generationConfig = { responseMimeType: 'application/json' };
   }
 
-  const res = await axios.post(
-    `${API_BASE}/${MODEL}:generateContent?key=${apiKey}`,
-    body,
-    { headers: { 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true }
-  );
+  let lastErr;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await axios.post(
+      `${API_BASE}/${MODEL}:generateContent?key=${apiKey}`,
+      body,
+      { headers: { 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true }
+    );
 
-  if (res.status !== 200) {
+    if (res.status === 200) {
+      recordUsage(purpose);
+      const candidate = res.data?.candidates?.[0];
+      const text = (candidate?.content?.parts || []).map(p => p.text || '').join('\n').trim();
+      const grounded = !!candidate?.groundingMetadata;
+      return { text, grounded };
+    }
+
     const err = new Error(res.data?.error?.message || `Gemini API hatası (HTTP ${res.status})`);
     err.status = res.status;
     err.geminiError = res.data?.error;
-    throw err;
+    lastErr = err;
+    recordUsage(purpose, { quotaError: res.status === 429 });
+
+    // Only quota/rate-limit errors are worth retrying — this is a per-minute window
+    // that rolls over quickly, not a hard cap. Auth/validation errors won't fix
+    // themselves on retry, so fail fast on those instead of wasting more calls.
+    const isLastAttempt = attempt === MAX_RETRIES;
+    if (res.status !== 429 || isLastAttempt) {
+      console.error(`Gemini call failed [purpose=${purpose}, attempt=${attempt + 1}/${MAX_RETRIES + 1}]:`, err.message);
+      throw err;
+    }
+
+    const suggested = parseRetryDelaySeconds(res.data?.error) ?? 3;
+    const delayMs = Math.min(MAX_RETRY_DELAY_MS, Math.max(MIN_RETRY_DELAY_MS, Math.ceil(suggested * 1000) + 300));
+    console.warn(`Gemini quota hit [purpose=${purpose}], retrying in ${delayMs}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
+    await sleep(delayMs);
   }
 
-  const candidate = res.data?.candidates?.[0];
-  const text = (candidate?.content?.parts || []).map(p => p.text || '').join('\n').trim();
-  const grounded = !!candidate?.groundingMetadata;
-
-  return { text, grounded };
+  throw lastErr;
 }
 
 const VERIFY_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -141,7 +201,7 @@ Kurallar:
 
   if (!groundingOnCooldown) {
     try {
-      const { text } = await callGemini({ prompt: basePrompt, useGrounding: true });
+      const { text } = await callGemini({ prompt: basePrompt, useGrounding: true, purpose: 'competitors_grounded' });
       rawResult = { competitors: extractJson(text), grounded: true, source: 'google_search_grounding' };
     } catch (err) {
       // Grounding unavailable (quota/billing/etc.) — fall back to the model's own
@@ -155,7 +215,8 @@ Kurallar:
   if (!rawResult) {
     const { text } = await callGemini({
       prompt: `${basePrompt}\n\nNot: Canlı arama yapamıyorsun, kendi bilgine dayanarak en isabetli tahminini yap.`,
-      jsonMode: true
+      jsonMode: true,
+      purpose: 'competitors_fallback'
     });
     rawResult = {
       competitors: extractJson(text),
@@ -235,7 +296,7 @@ Raporu şu yapıda yaz:
 
 Rapor müşteri-dostu olmalı, teknik jargonu abartmamalı ama somut ve aksiyona dönüktür.`;
 
-  const { text } = await callGemini({ prompt, useGrounding: false });
+  const { text } = await callGemini({ prompt, useGrounding: false, purpose: 'solution_report' });
   return { report: text };
 }
 
@@ -250,7 +311,16 @@ function toUserFacingError(err) {
   const status = err.status || err.response?.status;
 
   if (status === 429) {
-    return 'Şu anda çok fazla istek var, lütfen birkaç dakika sonra tekrar deneyin.';
+    // We already retried internally (see callGemini) using Google's own suggested
+    // wait time — if we're still here, quota is under sustained pressure, not just a
+    // momentary blip. Surface a concrete number when we have one instead of a vague
+    // "a few minutes" that doesn't match how quickly this quota actually resets.
+    const retrySeconds = parseRetryDelaySeconds(err.geminiError);
+    if (retrySeconds !== null) {
+      const rounded = Math.max(1, Math.ceil(retrySeconds));
+      return `Şu anda çok fazla istek var. Yaklaşık ${rounded} saniye sonra tekrar deneyin.`;
+    }
+    return 'Şu anda çok fazla istek var, lütfen kısa bir süre sonra tekrar deneyin.';
   }
   if (status === 401 || status === 403) {
     return 'AI servisine bağlanırken bir yetkilendirme sorunu oluştu. Lütfen daha sonra tekrar deneyin.';
@@ -269,5 +339,7 @@ module.exports = {
   generateSolutionReport,
   toUserFacingError,
   isDomainReachable,
-  verifyCompetitors
+  verifyCompetitors,
+  getUsageStats,
+  parseRetryDelaySeconds
 };

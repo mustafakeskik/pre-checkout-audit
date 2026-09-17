@@ -1,7 +1,7 @@
 const assert = require('assert');
 const { runAudit } = require('../services/auditEngine');
 const { normalizeUrl, looksLikeBotChallenge } = require('../services/urlUtils');
-const { toUserFacingError, isDomainReachable, verifyCompetitors } = require('../services/aiInsights');
+const { toUserFacingError, isDomainReachable, verifyCompetitors, parseRetryDelaySeconds } = require('../services/aiInsights');
 
 let passed = 0;
 async function test(name, fn) {
@@ -166,6 +166,35 @@ await test('verifyCompetitors drops hallucinated domains and keeps real ones, wi
   assert.strictEqual(verified[0].name, 'Google');
   assert.strictEqual(dropped.length, 1);
   assert.strictEqual(dropped[0].name, 'Müze Mağaza');
+});
+
+// --- Retry-delay parsing: real Gemini 429 payload shape (captured from a live
+// deliberately-triggered quota error) must parse correctly ---
+await test('parseRetryDelaySeconds reads the real RetryInfo shape Gemini returns', () => {
+  const geminiError = {
+    code: 429,
+    status: 'RESOURCE_EXHAUSTED',
+    details: [
+      { '@type': 'type.googleapis.com/google.rpc.Help', links: [] },
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [] },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '17.3s' }
+    ]
+  };
+  assert.strictEqual(parseRetryDelaySeconds(geminiError), 17.3);
+});
+
+await test('parseRetryDelaySeconds returns null when there is no RetryInfo (never throws)', () => {
+  assert.strictEqual(parseRetryDelaySeconds(undefined), null);
+  assert.strictEqual(parseRetryDelaySeconds({ details: [] }), null);
+});
+
+await test('toUserFacingError gives a concrete wait time when Gemini provides one, instead of a vague "few minutes"', () => {
+  const err = new Error('quota exceeded');
+  err.status = 429;
+  err.geminiError = { details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '6.6s' }] };
+  const msg = toUserFacingError(err);
+  assert.ok(msg.includes('7') || msg.includes('6'), `expected message to include the actual wait time, got: "${msg}"`);
+  assert.ok(!msg.toLowerCase().includes('dakika'), `expected a seconds-based message, not the old vague "minutes" one: "${msg}"`);
 });
 
 console.log(`\n${passed} test(s) passed.`);

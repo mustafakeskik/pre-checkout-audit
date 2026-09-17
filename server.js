@@ -339,6 +339,12 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// 8. AI Kota Kullanım İstatistikleri (debug/izleme amaçlı — hangi özellik ne kadar
+// Gemini çağrısı yapıyor ve kotayı ne sıklıkla tüketiyor görmek için)
+app.get('/api/ai/usage-stats', (req, res) => {
+  res.json(aiInsights.getUsageStats());
+});
+
 // Fallback SPA
 app.use((req, res) => {
   const indexPath = path.join(__dirname, 'client/dist/index.html');
