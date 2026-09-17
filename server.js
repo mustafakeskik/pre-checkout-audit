@@ -4,11 +4,12 @@ const cors = require('cors');
 const path = require('path');
 const { runAudit } = require('./services/auditEngine');
 const { crawlSite } = require('./services/crawler');
-const { 
-  isChromeInstalled, 
-  capturePageWithChrome, 
-  launchInteractiveSession, 
-  captureCurrentInteractivePage 
+const {
+  isChromeInstalled,
+  capturePageWithChrome,
+  launchInteractiveSession,
+  captureCurrentInteractivePage,
+  runLighthouseAudit
 } = require('./services/chromeManager');
 const codeGenerators = require('./services/codeGenerators');
 const { getBrandSettings, saveBrandSettings } = require('./services/brandSettings');
@@ -84,12 +85,15 @@ app.post('/api/audit/url', async (req, res) => {
     let botProtectionWarning = null;
 
     if (useChrome && isChromeInstalled()) {
-      // Run the headless-Chrome render AND a plain HTTP fetch in parallel — the plain
-      // fetch is needed anyway for robots.txt/sitemap/etc, and doubling as a sanity
-      // check lets us catch sites whose bot-protection serves Chrome a decoy page.
-      const [chromeResult, crawlData] = await Promise.all([
+      // Run the headless-Chrome render, a plain HTTP fetch, and a real Lighthouse
+      // Core Web Vitals audit all in parallel. Lighthouse gets its own dedicated
+      // Chrome instance (see runLighthouseAudit) so it doesn't contend with the
+      // content-capture page's navigation lifecycle. This is the slowest of the
+      // three (10-20s+), so it sets the pace for "Gerçek Chrome" mode overall.
+      const [chromeResult, crawlData, coreWebVitals] = await Promise.all([
         capturePageWithChrome(normalizedUrl),
-        crawlSite(normalizedUrl).catch(() => null)
+        crawlSite(normalizedUrl).catch(() => null),
+        runLighthouseAudit(normalizedUrl).catch(err => ({ measured: false, reason: err.message }))
       ]);
 
       const comparison = crawlData
@@ -109,6 +113,7 @@ app.post('/api/audit/url', async (req, res) => {
         additionalData.speedMetrics = chromeResult.speedMetrics;
       }
       botProtectionWarning = comparison.warning;
+      additionalData.coreWebVitals = coreWebVitals;
 
       if (crawlData) {
         additionalData.robotsTxt = crawlData.robotsTxt;

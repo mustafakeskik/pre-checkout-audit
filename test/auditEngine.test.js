@@ -277,6 +277,48 @@ await test('getSectorAverage computes a real average once 5+ distinct domains ex
   assert.strictEqual(result.scores.overall, 60);
 });
 
+// --- Core Web Vitals scoring (feature 1): only a real, measured result may claim
+// the "Core Web Vitals" name/score; a failed measurement must fall back honestly,
+// never fabricate a number ---
+await test('page_speed uses real Core Web Vitals scoring when coreWebVitals.measured is true', () => {
+  const html = '<html><body></body></html>';
+  const coreWebVitals = {
+    measured: true,
+    lcp: { value: 1800, unit: 'ms', rating: 'good' },
+    cls: { value: 0.05, unit: '', rating: 'good' },
+    inp: { value: 150, unit: 'ms', rating: 'good', isProxy: false },
+    performanceScore: 95
+  };
+  const result = runAudit(html, 'https://cwv-good-test.com', { coreWebVitals }).checklist.page_speed;
+  assert.ok(result.name.includes('Core Web Vitals'), `expected CWV name, got: "${result.name}"`);
+  assert.strictEqual(result.status, 'passed');
+  assert.ok(result.score >= 80);
+});
+
+await test('page_speed never fabricates a score when coreWebVitals measurement failed — falls back to honest labeling with the failure reason noted', () => {
+  const html = '<html><body></body></html>';
+  const coreWebVitals = { measured: false, reason: 'Site bot korumasına takıldı.' };
+  const speedMetrics = { ttfb: 100, loadTime: 500, score: 90, source: 'chrome_navigation_timing' };
+  const result = runAudit(html, 'https://cwv-failed-test.com', { speedMetrics, coreWebVitals }).checklist.page_speed;
+  assert.ok(!result.name.includes('Core Web Vitals'), `expected non-CWV fallback name, got: "${result.name}"`);
+  assert.ok(result.message.includes('bot korumasına takıldı'), `expected the failure reason surfaced in the message, got: "${result.message}"`);
+});
+
+await test('page_speed rates a poor LCP/CLS/INP combination as failed with a low score, not a fabricated pass', () => {
+  const html = '<html><body></body></html>';
+  const coreWebVitals = {
+    measured: true,
+    lcp: { value: 19000, unit: 'ms', rating: 'poor' },
+    cls: { value: 0.4, unit: '', rating: 'poor' },
+    inp: { value: 3000, unit: 'ms', rating: 'poor', isProxy: true, proxyLabel: 'Total Blocking Time (INP yerine)' },
+    performanceScore: 10
+  };
+  const result = runAudit(html, 'https://cwv-poor-test.com', { coreWebVitals }).checklist.page_speed;
+  assert.strictEqual(result.status, 'failed');
+  assert.strictEqual(result.score, 0);
+  assert.ok(result.message.includes('LCP') && result.message.includes('CLS'));
+});
+
 console.log(`\n${passed} test(s) passed.`);
 }
 

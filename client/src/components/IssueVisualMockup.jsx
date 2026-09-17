@@ -216,32 +216,55 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
         </div>
       );
 
-    case 'page_speed':
+    case 'page_speed': {
+      const ratingStyle = (rating) => {
+        if (rating === 'good') return { box: 'bg-emerald-50 border-emerald-200', label: 'text-emerald-800', value: 'text-emerald-700', tag: 'text-emerald-600', text: 'İyi ✓' };
+        if (rating === 'needs-improvement') return { box: 'bg-amber-50 border-amber-200', label: 'text-amber-800', value: 'text-amber-700', tag: 'text-amber-600', text: 'Geliştirilmeli' };
+        if (rating === 'poor') return { box: 'bg-rose-50 border-rose-200', label: 'text-rose-800', value: 'text-rose-700', tag: 'text-rose-600', text: 'Kötü ✕' };
+        return { box: 'bg-slate-50 border-slate-200', label: 'text-slate-500', value: 'text-slate-400', tag: 'text-slate-400', text: '—' };
+      };
+      const cwv = item?.details?.lcp && item?.details?.cls && item?.details?.inp ? item.details : null;
+
+      if (cwv) {
+        const metrics = [
+          { label: 'LCP', ...cwv.lcp, unitLabel: `${cwv.lcp.value} ms` },
+          { label: 'CLS', ...cwv.cls, unitLabel: `${cwv.cls.value}` },
+          { label: cwv.inp.isProxy ? 'TBT' : 'INP', ...cwv.inp, unitLabel: `${cwv.inp.value} ms` }
+        ];
+        return (
+          <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+              <span>📸 Gerçek Ölçüm: Core Web Vitals (Lighthouse)</span>
+              <span className="text-emerald-600 font-semibold">Canlı Performans Verisi</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              {metrics.map((m, i) => {
+                const s = ratingStyle(m.rating);
+                return (
+                  <div key={i} className={`p-2 border rounded-lg ${s.box}`}>
+                    <span className={`text-[10px] font-bold block ${s.label}`}>{m.label}</span>
+                    <span className={`text-sm font-extrabold ${s.value}`}>{m.unitLabel}</span>
+                    <span className={`text-[9px] block ${s.tag}`}>{s.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
             <span>📸 Görsel Mockup: Core Web Vitals Hız Göstergesi</span>
-            <span className="text-emerald-600 font-semibold">Performans Metrikleri</span>
+            <span className="text-slate-400 font-semibold">Ölçülemedi</span>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-xs">
-            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <span className="text-[10px] text-emerald-800 font-bold block">TTFB</span>
-              <span className="text-sm font-extrabold text-emerald-700">63 ms</span>
-              <span className="text-[9px] text-emerald-600 block">Çok Hızlı ✓</span>
-            </div>
-            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <span className="text-[10px] text-emerald-800 font-bold block">LCP Yüklenme</span>
-              <span className="text-sm font-extrabold text-emerald-700">731 ms</span>
-              <span className="text-[9px] text-emerald-600 block">İdeal Süre ✓</span>
-            </div>
-            <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
-              <span className="text-[10px] text-blue-800 font-bold block">HTML Boyutu</span>
-              <span className="text-sm font-extrabold text-blue-700">48 KB</span>
-              <span className="text-[9px] text-blue-600 block">Hafif Sayfa ✓</span>
-            </div>
-          </div>
+          <p className="text-xs text-slate-500">
+            Bu tarama için gerçek Core Web Vitals verisi mevcut değil. "Gerçek Google Chrome ile render et" seçeneğiyle taratarak LCP, CLS ve INP değerlerini görebilirsiniz.
+          </p>
         </div>
       );
+    }
 
     case 'sticky_phone_cta':
       return (

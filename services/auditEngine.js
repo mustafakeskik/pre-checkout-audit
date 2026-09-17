@@ -61,7 +61,7 @@ function runAudit(htmlContent, siteUrl = '', additionalData = {}) {
   results.checklist.faq_5 = auditFAQ($);
 
   // 8. Site Hızı (Core Web Vitals & Resource Audit)
-  results.checklist.page_speed = auditPageSpeed($, htmlContent, additionalData.speedMetrics);
+  results.checklist.page_speed = auditPageSpeed($, htmlContent, additionalData.speedMetrics, additionalData.coreWebVitals);
 
   // 9. Sticky Telefon CTA (Floating / Sticky Call & WhatsApp)
   results.checklist.sticky_phone_cta = auditStickyPhoneCTA($);
@@ -696,12 +696,59 @@ function auditFAQ($) {
 }
 
 // 8. Site Hızı & Core Web Vitals
-function auditPageSpeed($, htmlContent, speedMetrics) {
+const CWV_RATING_LABELS = { 'good': 'İyi', 'needs-improvement': 'Geliştirilmeli', 'poor': 'Kötü' };
+const CWV_RATING_POINTS = { 'good': 100 / 3, 'needs-improvement': 50 / 3, 'poor': 0 };
+
+function auditPageSpeed($, htmlContent, speedMetrics, coreWebVitals) {
   const scriptCount = $('script[src]').length;
   const styleCount = $('link[rel="stylesheet"]').length;
   const imageCount = $('img').length;
   const htmlSizeBytes = Buffer.byteLength(htmlContent || '', 'utf8');
   const htmlSizeKb = (htmlSizeBytes / 1024).toFixed(1);
+
+  // Real, measured Core Web Vitals (via Lighthouse) take priority when available —
+  // this is the only path allowed to claim "Core Web Vitals" in its name/score.
+  if (coreWebVitals && coreWebVitals.measured) {
+    const { lcp, cls, inp, performanceScore } = coreWebVitals;
+    const score = Math.round(CWV_RATING_POINTS[lcp.rating] + CWV_RATING_POINTS[cls.rating] + CWV_RATING_POINTS[inp.rating]);
+    const status = score >= 80 ? 'passed' : score >= 45 ? 'warning' : 'failed';
+
+    const inpLabel = inp.isProxy ? `${inp.proxyLabel}` : 'INP (Sayfa Etkileşim Tepki Süresi)';
+    const poorMetrics = [
+      lcp.rating === 'poor' ? 'LCP' : null,
+      cls.rating === 'poor' ? 'CLS' : null,
+      inp.rating === 'poor' ? (inp.isProxy ? 'TBT' : 'INP') : null
+    ].filter(Boolean);
+
+    return {
+      id: 'page_speed',
+      name: 'Core Web Vitals (Gerçek Ölçüm — Lighthouse)',
+      category: 'technicalSeo',
+      status,
+      score,
+      message: poorMetrics.length
+        ? `Core Web Vitals'da kritik sorun: ${poorMetrics.join(', ')} "Kötü" seviyede. LCP: ${lcp.value}ms (${CWV_RATING_LABELS[lcp.rating]}), CLS: ${cls.value} (${CWV_RATING_LABELS[cls.rating]}), ${inpLabel}: ${inp.value}ms (${CWV_RATING_LABELS[inp.rating]}).`
+        : `Core Web Vitals iyi durumda. LCP: ${lcp.value}ms (${CWV_RATING_LABELS[lcp.rating]}), CLS: ${cls.value} (${CWV_RATING_LABELS[cls.rating]}), ${inpLabel}: ${inp.value}ms (${CWV_RATING_LABELS[inp.rating]}).`,
+      details: {
+        lcp, cls, inp,
+        lighthousePerformanceScore: performanceScore,
+        htmlSizeKb: `${htmlSizeKb} KB`,
+        externalScripts: scriptCount,
+        stylesheets: styleCount,
+        images: imageCount
+      },
+      recommendation: poorMetrics.length
+        ? 'LCP için en büyük görselin/bloğun erken yüklenmesini sağlayın (preload, boyut optimizasyonu); CLS için görsellere width/height belirtin; yanıt süresi için ağır JavaScript\'i erteleyin.'
+        : 'Core Web Vitals değerleriniz Google\'ın "iyi" eşiklerinde — bu performansı korumak için düzenli olarak yeniden ölçün.'
+    };
+  }
+
+  // Lighthouse was attempted but failed (bot-blocked, timeout, crashed) — never fall
+  // back to a fabricated CWV number. Fall through to the honest speedMetrics/static
+  // measurement below, with a note explaining why real CWV isn't shown.
+  const cwvFailureNote = coreWebVitals && !coreWebVitals.measured
+    ? ` (Not: Gerçek Core Web Vitals ölçümü denendi ama başarısız oldu: ${coreWebVitals.reason})`
+    : '';
 
   if (speedMetrics) {
     const ttfb = speedMetrics.ttfb ?? 0;
@@ -723,7 +770,7 @@ function auditPageSpeed($, htmlContent, speedMetrics) {
       category: 'technicalSeo',
       status: score >= 80 ? 'passed' : score >= 50 ? 'warning' : 'failed',
       score: score,
-      message: `TTFB: ${ttfb}ms, Toplam Süre: ${loadTime}ms. ${methodNote}`,
+      message: `TTFB: ${ttfb}ms, Toplam Süre: ${loadTime}ms. ${methodNote}${cwvFailureNote}`,
       details: {
         ttfb,
         loadTime,
