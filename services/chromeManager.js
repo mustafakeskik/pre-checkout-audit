@@ -1,40 +1,91 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const lighthouse = require('lighthouse').default;
+const serverlessChromium = require('@sparticuz/chromium').default;
 const { normalizeUrl } = require('./urlUtils');
 
 /**
  * Chrome Browser Integration Manager
- * Connects directly to Google Chrome installed on macOS (/Applications/Google Chrome.app)
- * No API keys needed. Supports rendering live DOM, capturing authenticated sessions, and screenshots.
+ *
+ * Two Chrome sources, picked automatically depending on environment:
+ * 1. Local Google Chrome on macOS (/Applications/Google Chrome.app) — used for
+ *    everything when developing on a Mac, and REQUIRED for the interactive
+ *    "Chrome ile Canlı Bağlan" feature specifically (that one opens a real,
+ *    visible window for a human to log into their store with — there is no
+ *    headless/serverless equivalent of that, by definition).
+ * 2. @sparticuz/chromium's bundled headless Chromium binary — used as a fallback
+ *    for rendering/Lighthouse on a server with no local Chrome (e.g. Render).
+ *    This is a Linux-only binary; it's simply never selected on macOS since
+ *    local Chrome is always tried first there.
  */
 
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const LOCAL_CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-function isChromeInstalled() {
-  return fs.existsSync(CHROME_PATH);
+function isLocalChromeInstalled() {
+  return fs.existsSync(LOCAL_CHROME_PATH);
+}
+
+let serverlessExecutablePathCache = null;
+
+/**
+ * Resolves the executable + launch args to use for headless rendering
+ * (page capture, Lighthouse) — local Chrome when available, otherwise the
+ * bundled serverless Chromium. Throws if neither is usable.
+ */
+async function getRenderingChromeConfig() {
+  if (isLocalChromeInstalled()) {
+    return {
+      executablePath: LOCAL_CHROME_PATH,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--window-size=1440,900'
+      ],
+      headless: 'new'
+    };
+  }
+
+  if (!serverlessExecutablePathCache) {
+    serverlessExecutablePathCache = await serverlessChromium.executablePath();
+  }
+  return {
+    executablePath: serverlessExecutablePathCache,
+    args: [...serverlessChromium.args, '--window-size=1440,900'],
+    headless: serverlessChromium.headless ?? true
+  };
 }
 
 /**
- * Renders a page in Google Chrome and extracts rendered DOM + performance metrics + screenshot
+ * True if rendering (page capture, Lighthouse) can work at all in this
+ * environment — local Chrome OR the bundled serverless Chromium. In practice
+ * this is almost always true once @sparticuz/chromium is installed, but stays
+ * a real check (not a hardcoded true) in case that binary is ever unusable on
+ * an unexpected platform.
+ */
+async function isChromeInstalled() {
+  if (isLocalChromeInstalled()) return true;
+  try {
+    await getRenderingChromeConfig();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Renders a page in Chrome (local or serverless) and extracts rendered DOM +
+ * performance metrics + screenshot
  */
 async function capturePageWithChrome(targetUrl, options = {}) {
-  if (!isChromeInstalled()) {
-    throw new Error('Sistemde kurulu Google Chrome bulunamadı (/Applications/Google Chrome.app).');
-  }
-
+  const chromeConfig = await getRenderingChromeConfig();
   const formattedUrl = normalizeUrl(targetUrl);
 
   const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
-    headless: options.headless !== false ? 'new' : false,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--window-size=1440,900'
-    ],
+    executablePath: chromeConfig.executablePath,
+    headless: options.headless !== false ? chromeConfig.headless : false,
+    args: chromeConfig.args,
     defaultViewport: {
       width: 1440,
       height: 900
@@ -118,7 +169,10 @@ async function capturePageWithChrome(targetUrl, options = {}) {
 let interactiveSession = null;
 
 async function launchInteractiveSession(startUrl = 'https://google.com') {
-  if (!isChromeInstalled()) {
+  // Deliberately the LOCAL-only check — this opens a real, visible browser window
+  // for a human to interact with, which only makes sense on the machine the human
+  // is actually sitting at. There is no serverless/headless equivalent of this.
+  if (!isLocalChromeInstalled()) {
     throw new Error('Google Chrome bulunamadı.');
   }
 
@@ -130,7 +184,7 @@ async function launchInteractiveSession(startUrl = 'https://google.com') {
   }
 
   const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
+    executablePath: LOCAL_CHROME_PATH,
     headless: false, // Opens visible Chrome window
     args: [
       '--no-sandbox',
@@ -212,17 +266,14 @@ function rateMetric(value, thresholds) {
  * elsewhere in this app (a wrong "88/100 site speed" is worse than no number at all).
  */
 async function runLighthouseAudit(targetUrl, options = {}) {
-  if (!isChromeInstalled()) {
-    return { measured: false, reason: 'Google Chrome bulunamadı.' };
-  }
-
   const formattedUrl = normalizeUrl(targetUrl);
   let browser;
   try {
+    const chromeConfig = await getRenderingChromeConfig();
     browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
-      headless: options.headless !== false ? 'new' : false,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--remote-debugging-port=0', '--window-size=1440,900'],
+      executablePath: chromeConfig.executablePath,
+      headless: options.headless !== false ? chromeConfig.headless : false,
+      args: [...chromeConfig.args, '--remote-debugging-port=0'],
       defaultViewport: { width: 1440, height: 900 }
     });
 
@@ -281,6 +332,7 @@ async function runLighthouseAudit(targetUrl, options = {}) {
 
 module.exports = {
   isChromeInstalled,
+  isLocalChromeInstalled,
   capturePageWithChrome,
   launchInteractiveSession,
   captureCurrentInteractivePage,

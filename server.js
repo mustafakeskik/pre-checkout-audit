@@ -6,6 +6,7 @@ const { runAudit } = require('./services/auditEngine');
 const { crawlSite } = require('./services/crawler');
 const {
   isChromeInstalled,
+  isLocalChromeInstalled,
   capturePageWithChrome,
   launchInteractiveSession,
   captureCurrentInteractivePage,
@@ -84,7 +85,7 @@ app.post('/api/audit/url', async (req, res) => {
     let finalUrl = normalizedUrl;
     let botProtectionWarning = null;
 
-    if (useChrome && isChromeInstalled()) {
+    if (useChrome && await isChromeInstalled()) {
       // Run the headless-Chrome render, a plain HTTP fetch, and a real Lighthouse
       // Core Web Vitals audit all in parallel. Lighthouse gets its own dedicated
       // Chrome instance (see runLighthouseAudit) so it doesn't contend with the
@@ -131,12 +132,15 @@ app.post('/api/audit/url', async (req, res) => {
 
       // Distinguish "user didn't ask for Chrome" from "user asked but this server
       // can't provide it" — these need different messages downstream. Without this,
-      // a Chrome-less deployment (e.g. Render) silently shows the generic "check that
-      // option" hint even when the user already checked it, which is just wrong.
-      if (useChrome && !isChromeInstalled()) {
+      // a deployment where even the bundled serverless Chromium fails to init
+      // silently shows the generic "check that option" hint even though the user
+      // already checked it, which is just wrong. In practice this branch is rare
+      // now that @sparticuz/chromium is bundled (works on essentially any Linux
+      // host), but stays as an honest fallback in case that binary is ever unusable.
+      if (useChrome && !(await isChromeInstalled())) {
         additionalData.coreWebVitals = {
           measured: false,
-          reason: 'Bu sunucuda Core Web Vitals ölçümü için gerekli yerel Google Chrome kurulu değil. Bu özellik yalnızca geliştiricinin kendi bilgisayarında (localhost) çalışır — canlı/deploy edilmiş sunucuda devre dışıdır.'
+          reason: 'Bu sunucuda Chrome/Chromium başlatılamadı (ne yerel Chrome ne de gömülü Chromium çalışıyor). Core Web Vitals bu ortamda ölçülemiyor.'
         };
       }
 
@@ -388,10 +392,15 @@ app.put('/api/brand-settings', (req, res) => {
 });
 
 // 6. Sistem Sağlık & Chrome Durum Kontrolü
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   res.json({
     status: 'ok',
-    chromeInstalled: isChromeInstalled(),
+    // "Yerel Chrome" badge / interactive "Chrome ile Canlı Bağlan" feature —
+    // deliberately local-only, since that feature opens a real visible window.
+    chromeInstalled: isLocalChromeInstalled(),
+    // General rendering capability (local Chrome OR bundled serverless Chromium) —
+    // what actually gates "Gerçek Chrome ile render et" + Core Web Vitals.
+    renderingChromeAvailable: await isChromeInstalled(),
     uptime: process.uptime()
   });
 });
