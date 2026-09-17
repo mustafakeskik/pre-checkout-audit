@@ -73,7 +73,11 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
         </div>
       );
 
-    case 'internal_linking':
+    case 'internal_linking': {
+      const realLinks = (item?.details?.sample || []).filter(l => l?.href).slice(0, 3);
+      const linksToShow = realLinks.length > 0
+        ? realLinks
+        : [{ href: '/kategori/orn-kategori' }, { href: '/urun/orn-urun' }, { href: '/blog/orn-icerik' }];
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -82,19 +86,15 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </div>
           <div className="bg-white border border-slate-300 rounded-lg p-3 shadow-sm">
             <p className="text-xs text-slate-700 leading-relaxed">
-              Örnek İçerik: "En çok tercih edilen <span className="text-blue-600 underline font-semibold">çiftlere özel takviye edici gıdalar</span> ve 
-              vitamin kombinasyonlarımızı <span className="text-blue-600 underline font-semibold">günlük sağlık destekleri</span> kategorimizden inceleyebilirsiniz."
+              Örnek İçerik: "En çok tercih edilen <span className="text-blue-600 underline font-semibold">[ilgili kategori adı]</span> ve
+              ürünlerimizi <span className="text-blue-600 underline font-semibold">[önerilen kategori]</span> bölümümüzden inceleyebilirsiniz."
             </p>
             <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-slate-100">
-              <span className="bg-slate-100 text-blue-600 text-[10px] font-medium px-2 py-0.5 rounded border border-slate-200">
-                🔗 /kategori/takviye-edici-gidalar
-              </span>
-              <span className="bg-slate-100 text-blue-600 text-[10px] font-medium px-2 py-0.5 rounded border border-slate-200">
-                🔗 /urun/faynmen-bitkisel-destek
-              </span>
-              <span className="bg-slate-100 text-blue-600 text-[10px] font-medium px-2 py-0.5 rounded border border-slate-200">
-                🔗 /blog/gebelik-oncesi-saglik
-              </span>
+              {linksToShow.map((l, i) => (
+                <span key={i} className="bg-slate-100 text-blue-600 text-[10px] font-medium px-2 py-0.5 rounded border border-slate-200">
+                  🔗 {l.href}
+                </span>
+              ))}
             </div>
           </div>
           <span className="text-[10px] text-slate-500 mt-1.5 block italic">
@@ -102,6 +102,7 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </span>
         </div>
       );
+    }
 
     case 'thank_you_page':
       return (
@@ -138,11 +139,11 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
             <div className="flex items-center space-x-1.5 text-xs font-medium text-slate-600">
               <span className="text-blue-600 hover:underline cursor-pointer">🏠 Ana Sayfa</span>
               <span className="text-slate-400">›</span>
-              <span className="text-blue-600 hover:underline cursor-pointer">Kadın Sağlığı</span>
+              <span className="text-blue-600 hover:underline cursor-pointer">[Ana Kategori]</span>
               <span className="text-slate-400">›</span>
-              <span className="text-blue-600 hover:underline cursor-pointer">Doğal Takviyeler</span>
+              <span className="text-blue-600 hover:underline cursor-pointer">[Alt Kategori]</span>
               <span className="text-slate-400">›</span>
-              <span className="text-slate-900 font-bold">FaynWomen 2000mg İnositol</span>
+              <span className="text-slate-900 font-bold">[Ürün Adı]</span>
             </div>
           </div>
           <span className="text-[10px] text-slate-500 mt-1.5 block italic">
@@ -163,9 +164,9 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
               +94%
             </div>
             <div>
-              <div className="font-bold text-xs text-slate-900">Vaka İncelemesi: 3 Aylık Düzenli Kullanım Sonuçları</div>
+              <div className="font-bold text-xs text-slate-900">Vaka İncelemesi: [Müşteri/Proje Adı] Sonuçları</div>
               <p className="text-[11px] text-slate-600 line-clamp-1">
-                "Klinik destek sürecinde değerlerimizde %94 oranında gözle görülür artış sağlandı." — Doç. Dr. M. Kaya
+                "[Ölçülebilir bir sonuç veya memnuniyet ifadesi]" — [Müşteri Adı, Unvanı]
               </p>
             </div>
           </div>
@@ -292,7 +293,7 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </div>
           <div className="bg-slate-900 text-slate-100 font-mono text-[11px] p-3 rounded-lg border border-slate-300 leading-relaxed shadow-sm">
             <div className="text-purple-300 font-bold"># {domain.toUpperCase()} - AI Kılavuzu</div>
-            <div className="text-slate-300">&gt; Doğal sağlık destekleri ve bitkisel ürünler mağazası.</div>
+            <div className="text-slate-300">&gt; [Sitenizin kısa açıklaması buraya gelir.]</div>
             <div className="text-slate-300 mt-1">- [Ürünler](https://{domain}/urunler)</div>
             <div className="text-slate-300">- [Mesafeli Satış](https://{domain}/mesafeli-satis)</div>
           </div>
@@ -302,7 +303,10 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
         </div>
       );
 
-    case 'meta_title':
+    case 'meta_title': {
+      const realTitle = item?.details?.title;
+      const titleToShow = realTitle || '[Sayfa Başlığınız Burada Görünecek]';
+      const titleLen = realTitle ? realTitle.length : null;
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -312,17 +316,20 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           <div className="bg-white border border-slate-300 rounded-lg p-3 shadow-sm">
             <div className="text-xs text-slate-500">{domain} › anasayfa</div>
             <div className="text-blue-800 text-sm font-medium hover:underline mt-0.5">
-              FaynMed | Doğadan Bilime Bütüncül Sağlık Destekleri
+              {titleToShow}
             </div>
-            <div className="mt-1 flex items-center gap-2">
-              <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-emerald-500 h-full w-[85%]" />
+            {titleLen !== null && (
+              <div className="mt-1 flex items-center gap-2">
+                <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                  <div className={`h-full ${titleLen >= 30 && titleLen <= 60 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, (titleLen / 60) * 100)}%` }} />
+                </div>
+                <span className="text-[10px] font-mono text-slate-600 font-bold shrink-0">{titleLen} / 60 Karakter</span>
               </div>
-              <span className="text-[10px] font-mono text-emerald-700 font-bold shrink-0">51 / 60 Karakter (İdeal)</span>
-            </div>
+            )}
           </div>
         </div>
       );
+    }
 
     case 'fast_auth_buttons':
       return (
@@ -345,7 +352,10 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
         </div>
       );
 
-    case 'meta_description':
+    case 'meta_description': {
+      const realDesc = item?.details?.description;
+      const descToShow = realDesc || '[Ürünleriniz, kargo ve ödeme avantajlarınızı özetleyen 120-160 karakterlik açıklama buraya gelir.]';
+      const descLen = realDesc ? realDesc.length : null;
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -354,17 +364,23 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </div>
           <div className="bg-white border border-slate-300 rounded-lg p-3 shadow-sm text-xs">
             <div className="text-slate-600 leading-relaxed">
-              "Doğadan bilime bütüncül sağlık destekleri. Çiftlere özel takviye edici formüller, yüksek saflıkta bileşenler ve aynı gün kargo avantajıyla hemen sipariş verin."
+              "{descToShow}"
             </div>
             <div className="mt-2 text-[10px] font-mono text-slate-500 flex justify-between">
               <span>Hedef Uzunluk: 120-160 Karakter</span>
-              <span className="font-bold text-blue-700">Mevcut: ~145 Karakter ✓</span>
+              {descLen !== null && (
+                <span className={`font-bold ${descLen >= 120 && descLen <= 160 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  Mevcut: ~{descLen} Karakter
+                </span>
+              )}
             </div>
           </div>
         </div>
       );
+    }
 
-    case 'social_sharing':
+    case 'social_sharing': {
+      const realOgTitle = item?.details?.ogTitle;
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -377,8 +393,8 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
             </div>
             <div className="p-2.5 bg-slate-950 text-white text-xs">
               <div className="text-[10px] text-slate-400 uppercase">{domain}</div>
-              <div className="font-bold text-slate-100 line-clamp-1">FaynMed | Bütüncül Sağlık Destekleri</div>
-              <div className="text-[11px] text-slate-400 line-clamp-1">Aynı gün kargo ve güvenli ödeme fırsatıyla keşfedin.</div>
+              <div className="font-bold text-slate-100 line-clamp-1">{realOgTitle || '[Sayfa Başlığınız]'}</div>
+              <div className="text-[11px] text-slate-400 line-clamp-1">[Kısa, ikna edici bir açıklama buraya gelir.]</div>
             </div>
           </div>
           <span className="text-[10px] text-slate-500 mt-1.5 block italic">
@@ -386,6 +402,7 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </span>
         </div>
       );
+    }
 
     case 'google_map_address':
       return (
@@ -434,7 +451,9 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
         </div>
       );
 
-    case 'image_alt_tags':
+    case 'image_alt_tags': {
+      const realSrc = item?.details?.sample?.[0];
+      const fileName = realSrc ? realSrc.split('/').pop().split('?')[0] : 'urun-gorseli.jpg';
       return (
         <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -445,10 +464,10 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
             <div className="w-12 h-12 bg-slate-100 border border-slate-200 rounded flex items-center justify-center text-slate-400 font-bold text-[10px] shrink-0">
               🖼️ Ürün
             </div>
-            <div className="font-mono text-[11px] text-slate-700">
-              &lt;img src="faynwomen.jpg" <br />
+            <div className="font-mono text-[11px] text-slate-700 break-all">
+              &lt;img src="{fileName}" <br />
               <span className="text-emerald-700 font-bold bg-emerald-50 px-1 rounded">
-                alt="FaynWomen 2000mg İnositol Bütüncül Takviye"
+                alt="[Ürün Adı] - [Renk/Özellik]"
               </span>&gt;
             </div>
           </div>
@@ -457,6 +476,7 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
           </span>
         </div>
       );
+    }
 
     case 'google_rich_snippets':
       return (
@@ -466,10 +486,10 @@ export default function IssueVisualMockup({ itemId, item, siteUrl }) {
             <span className="text-purple-600 font-semibold">Schema.org Product</span>
           </div>
           <div className="bg-white border border-slate-300 rounded-lg p-3 shadow-sm text-xs">
-            <div className="text-blue-800 font-medium text-sm">FaynWomen 2000mg Doğal Takviye</div>
+            <div className="text-blue-800 font-medium text-sm">[Ürün Adı]</div>
             <div className="flex items-center gap-3 text-[11px] text-slate-700 mt-1">
-              <span className="text-amber-500 font-bold">★★★★★ 4.8</span>
-              <span className="font-bold text-emerald-700">₺1.250,00</span>
+              <span className="text-amber-500 font-bold">★★★★★ [Puan]</span>
+              <span className="font-bold text-emerald-700">[Fiyat]</span>
               <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-bold">Stokta Var ✓</span>
             </div>
           </div>
