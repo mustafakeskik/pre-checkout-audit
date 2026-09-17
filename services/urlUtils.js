@@ -10,9 +10,11 @@
  * and every place that needs the hostname/etc. should use safeParseUrl().
  */
 
+const { UserFacingError } = require('./errors');
+
 function normalizeUrl(input) {
   if (!input || typeof input !== 'string') {
-    throw new Error('Geçersiz veya boş URL.');
+    throw new UserFacingError('Geçersiz veya boş URL.');
   }
   let trimmed = input.trim();
   // Strip stray leading/trailing slashes some users paste (e.g. "/site.com/")
@@ -26,7 +28,7 @@ function normalizeUrl(input) {
     // eslint-disable-next-line no-new
     new URL(trimmed);
   } catch (e) {
-    throw new Error(`Geçersiz URL formatı: "${input}"`);
+    throw new UserFacingError(`Geçersiz URL formatı: "${input}"`);
   }
   return trimmed;
 }

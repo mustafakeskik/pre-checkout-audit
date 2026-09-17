@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { normalizeUrl } = require('./urlUtils');
+const { UserFacingError } = require('./errors');
 
 /**
  * Web Crawler and Asset Checker
@@ -39,7 +40,8 @@ async function crawlSite(targetUrl) {
       }
     });
   } catch (err) {
-    throw new Error(`Hedef siteye erişilemedi: ${err.message}`);
+    console.error('crawlSite fetch failed:', err.message);
+    throw new UserFacingError(`Hedef siteye erişilemedi (${formattedUrl}). Lütfen adresi kontrol edip tekrar deneyin.`);
   }
   const loadTime = Date.now() - startTime;
   const ttfb = firstByteAt !== null ? (firstByteAt - startTime) : loadTime;

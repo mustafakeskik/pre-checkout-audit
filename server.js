@@ -17,6 +17,7 @@ const { getBrandSettings, saveBrandSettings } = require('./services/brandSetting
 const aiInsights = require('./services/aiInsights');
 const { normalizeUrl, looksLikeBotChallenge, compareRenderedVsPlainFetch } = require('./services/urlUtils');
 const historyStore = require('./services/historyStore');
+const { toSafeErrorMessage } = require('./services/errors');
 
 const app = express();
 const PORT = process.env.PORT || 3300;
@@ -94,7 +95,7 @@ app.post('/api/audit/url', async (req, res) => {
       const [chromeResult, crawlData, coreWebVitals] = await Promise.all([
         capturePageWithChrome(normalizedUrl),
         crawlSite(normalizedUrl).catch(() => null),
-        runLighthouseAudit(normalizedUrl).catch(err => ({ measured: false, reason: err.message }))
+        runLighthouseAudit(normalizedUrl).catch(err => ({ measured: false, reason: toSafeErrorMessage(err, 'Core Web Vitals ölçümü sırasında beklenmeyen bir hata oluştu.') }))
       ]);
 
       const comparison = crawlData
@@ -162,7 +163,7 @@ app.post('/api/audit/url', async (req, res) => {
     res.json(auditResult);
   } catch (err) {
     console.error('Audit URL Error:', err);
-    res.status(500).json({ error: err.message || 'Site denetlenirken bir hata oluştu.' });
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Site denetlenirken bir hata oluştu.') });
   }
 });
 
@@ -186,7 +187,7 @@ app.post('/api/audit/html', (req, res) => {
     res.json(auditResult);
   } catch (err) {
     console.error('Audit HTML Error:', err);
-    res.status(500).json({ error: err.message || 'HTML denetlenirken hata oluştu.' });
+    res.status(500).json({ error: toSafeErrorMessage(err, 'HTML denetlenirken hata oluştu.') });
   }
 });
 
@@ -213,13 +214,13 @@ app.post('/api/audit/compare', async (req, res) => {
 
     const sites = settled.map((r, idx) => {
       if (r.status === 'fulfilled') return r.value;
-      return { url: targets[idx].url, isMain: targets[idx].isMain, error: r.reason?.message || 'Site taranamadı.' };
+      return { url: targets[idx].url, isMain: targets[idx].isMain, error: toSafeErrorMessage(r.reason, 'Site taranamadı.') };
     });
 
     res.json({ sites });
   } catch (err) {
     console.error('Compare Error:', err);
-    res.status(500).json({ error: err.message || 'Karşılaştırma sırasında hata oluştu.' });
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Karşılaştırma sırasında hata oluştu.') });
   }
 });
 
@@ -263,7 +264,7 @@ app.post('/api/chrome/launch', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('Chrome Launch Error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Chrome başlatılırken bir hata oluştu.') });
   }
 });
 
@@ -278,7 +279,7 @@ app.post('/api/chrome/capture', async (req, res) => {
     res.json(auditResult);
   } catch (err) {
     console.error('Chrome Capture Error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Sayfa yakalanırken bir hata oluştu.') });
   }
 });
 
@@ -373,7 +374,8 @@ app.post('/api/generate-fix', (req, res) => {
 
     res.json({ type, snippet });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Generate Fix Error:', err);
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Kod üretilirken bir hata oluştu.') });
   }
 });
 
@@ -387,7 +389,8 @@ app.put('/api/brand-settings', (req, res) => {
     const updated = saveBrandSettings(req.body || {});
     res.json(updated);
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Marka ayarları kaydedilemedi.' });
+    console.error('Save Brand Settings Error:', err);
+    res.status(500).json({ error: toSafeErrorMessage(err, 'Marka ayarları kaydedilemedi.') });
   }
 });
 

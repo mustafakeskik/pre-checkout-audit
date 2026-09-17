@@ -3,6 +3,7 @@ const fs = require('fs');
 const lighthouse = require('lighthouse').default;
 const serverlessChromium = require('@sparticuz/chromium').default;
 const { normalizeUrl } = require('./urlUtils');
+const { UserFacingError } = require('./errors');
 
 /**
  * Chrome Browser Integration Manager
@@ -25,7 +26,23 @@ function isLocalChromeInstalled() {
   return fs.existsSync(LOCAL_CHROME_PATH);
 }
 
-let serverlessExecutablePathCache = null;
+// Caches the IN-FLIGHT PROMISE, not just its resolved value. @sparticuz/chromium's
+// executablePath() decompresses a ~200MB binary to /tmp on first call — if two
+// requests call it concurrently before caching a plain value, both start extracting
+// at once and one ends up trying to exec a file the other is still writing to
+// (Node's `spawn ETXTBSY`). Caching the promise means every concurrent caller
+// awaits the exact same extraction instead of racing to start their own.
+let serverlessExecutablePathPromise = null;
+
+async function resolveServerlessExecutablePath() {
+  if (!serverlessExecutablePathPromise) {
+    serverlessExecutablePathPromise = serverlessChromium.executablePath().catch(err => {
+      serverlessExecutablePathPromise = null; // let a later call retry instead of caching a permanent failure
+      throw err;
+    });
+  }
+  return serverlessExecutablePathPromise;
+}
 
 /**
  * Resolves the executable + launch args to use for headless rendering
@@ -47,11 +64,9 @@ async function getRenderingChromeConfig() {
     };
   }
 
-  if (!serverlessExecutablePathCache) {
-    serverlessExecutablePathCache = await serverlessChromium.executablePath();
-  }
+  const executablePath = await resolveServerlessExecutablePath();
   return {
-    executablePath: serverlessExecutablePathCache,
+    executablePath,
     args: [...serverlessChromium.args, '--window-size=1440,900'],
     headless: serverlessChromium.headless ?? true
   };
@@ -75,24 +90,60 @@ async function isChromeInstalled() {
 }
 
 /**
+ * Races a promise against a hard deadline. If the deadline wins, force-kills
+ * the browser process (SIGKILL, not just .close()) so a hung/stuck Chrome
+ * process can never leave a lock/handle behind for the next request to trip
+ * over — this is what caused a second audit to hang forever after a first
+ * one failed mid-launch.
+ */
+function withHardTimeout(promise, ms, getBrowser, timeoutMessage) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const browser = getBrowser();
+      if (browser) {
+        try {
+          browser.process()?.kill('SIGKILL');
+        } catch (e) { /* already dead */ }
+      }
+      reject(new UserFacingError(timeoutMessage));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Renders a page in Chrome (local or serverless) and extracts rendered DOM +
  * performance metrics + screenshot
  */
 async function capturePageWithChrome(targetUrl, options = {}) {
-  const chromeConfig = await getRenderingChromeConfig();
-  const formattedUrl = normalizeUrl(targetUrl);
+  let browser;
+  return withHardTimeout(
+    (async () => {
+      const chromeConfig = await getRenderingChromeConfig();
+      const formattedUrl = normalizeUrl(targetUrl);
 
-  const browser = await puppeteer.launch({
-    executablePath: chromeConfig.executablePath,
-    headless: options.headless !== false ? chromeConfig.headless : false,
-    args: chromeConfig.args,
-    defaultViewport: {
-      width: 1440,
-      height: 900
-    }
+      browser = await puppeteer.launch({
+        executablePath: chromeConfig.executablePath,
+        headless: options.headless !== false ? chromeConfig.headless : false,
+        args: chromeConfig.args,
+        defaultViewport: {
+          width: 1440,
+          height: 900
+        }
+      });
+
+      return capturePageWithChromeInner(browser, formattedUrl, options);
+    })(),
+    options.hardTimeout || 45000,
+    () => browser,
+    'Sayfa yakalama 45 saniye içinde tamamlanamadı (zaman aşımı).'
+  ).finally(() => {
+    if (browser) browser.close().catch(() => {});
   });
+}
 
-  try {
+async function capturePageWithChromeInner(browser, formattedUrl, options) {
     const page = await browser.newPage();
     // A recent, realistic desktop Chrome UA/fingerprint — headless-looking UAs are a
     // common trigger for bot-protection systems to serve a decoy/challenge page instead
@@ -108,7 +159,7 @@ async function capturePageWithChrome(targetUrl, options = {}) {
       });
     } catch (navErr) {
       if (navErr.message.includes('ERR_NAME_NOT_RESOLVED') || navErr.message.includes('ERR_CONNECTION_REFUSED') || navErr.message.includes('Cannot navigate to invalid URL')) {
-        throw new Error(`Web sitesine ulaşılamadı (${formattedUrl}). Lütfen geçerli bir internet adresi girdiğinizden emin olun.`);
+        throw new UserFacingError(`Web sitesine ulaşılamadı (${formattedUrl}). Lütfen geçerli bir internet adresi girdiğinizden emin olun.`);
       }
       console.warn('Page navigation warning (proceeding with rendered DOM):', navErr.message);
     }
@@ -158,9 +209,6 @@ async function capturePageWithChrome(targetUrl, options = {}) {
         source: perfTiming ? 'chrome_navigation_timing' : 'chrome_estimate'
       }
     };
-  } finally {
-    await browser.close();
-  }
 }
 
 /**
@@ -173,7 +221,7 @@ async function launchInteractiveSession(startUrl = 'https://google.com') {
   // for a human to interact with, which only makes sense on the machine the human
   // is actually sitting at. There is no serverless/headless equivalent of this.
   if (!isLocalChromeInstalled()) {
-    throw new Error('Google Chrome bulunamadı.');
+    throw new UserFacingError('Google Chrome bulunamadı.');
   }
 
   if (interactiveSession && interactiveSession.browser.isConnected()) {
@@ -222,7 +270,7 @@ async function launchInteractiveSession(startUrl = 'https://google.com') {
  */
 async function captureCurrentInteractivePage() {
   if (!interactiveSession || !interactiveSession.browser.isConnected()) {
-    throw new Error('Aktif bir canlı Chrome oturumu bulunamadı. Lütfen önce "Chrome\'u Başlat" butonuna tıklayın.');
+    throw new UserFacingError('Aktif bir canlı Chrome oturumu bulunamadı. Lütfen önce "Chrome\'u Başlat" butonuna tıklayın.');
   }
 
   const pages = await interactiveSession.browser.pages();
@@ -266,6 +314,28 @@ function rateMetric(value, thresholds) {
  * elsewhere in this app (a wrong "88/100 site speed" is worse than no number at all).
  */
 async function runLighthouseAudit(targetUrl, options = {}) {
+  let browser;
+  try {
+    return await withHardTimeout(
+      runLighthouseAuditInner(targetUrl, options, (b) => { browser = b; }),
+      options.hardTimeout || 40000,
+      () => browser,
+      'Core Web Vitals ölçümü 40 saniye içinde tamamlanamadı (zaman aşımı).'
+    );
+  } catch (err) {
+    // Never leak a raw Node/system error (e.g. "spawn ETXTBSY") into what's ultimately
+    // shown in the report — only a message we deliberately crafted for the user is safe.
+    console.error('Lighthouse audit failed:', err.message);
+    return {
+      measured: false,
+      reason: err.userFacing ? err.message : 'Core Web Vitals ölçümü sırasında beklenmeyen bir hata oluştu.'
+    };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+async function runLighthouseAuditInner(targetUrl, options, setBrowser) {
   const formattedUrl = normalizeUrl(targetUrl);
   let browser;
   try {
@@ -276,11 +346,12 @@ async function runLighthouseAudit(targetUrl, options = {}) {
       args: [...chromeConfig.args, '--remote-debugging-port=0'],
       defaultViewport: { width: 1440, height: 900 }
     });
+    setBrowser(browser);
 
     const wsEndpoint = browser.wsEndpoint();
     const portMatch = wsEndpoint.match(/:(\d+)\//);
     if (!portMatch) {
-      throw new Error('Chrome remote debugging portu belirlenemedi.');
+      throw new UserFacingError('Chrome remote debugging portu belirlenemedi.');
     }
     const port = parseInt(portMatch[1], 10);
 
@@ -323,8 +394,11 @@ async function runLighthouseAudit(targetUrl, options = {}) {
         : null
     };
   } catch (err) {
-    console.error('Lighthouse audit failed:', err.message);
-    return { measured: false, reason: err.message || 'Core Web Vitals ölçümü sırasında beklenmeyen bir hata oluştu.' };
+    console.error('Lighthouse audit (inner) failed:', err.message);
+    return {
+      measured: false,
+      reason: err.userFacing ? err.message : 'Core Web Vitals ölçümü sırasında beklenmeyen bir hata oluştu.'
+    };
   } finally {
     if (browser) await browser.close().catch(() => {});
   }

@@ -3,6 +3,7 @@ const { runAudit } = require('../services/auditEngine');
 const { normalizeUrl, looksLikeBotChallenge } = require('../services/urlUtils');
 const { toUserFacingError, isDomainReachable, verifyCompetitors, parseRetryDelaySeconds } = require('../services/aiInsights');
 const historyStore = require('../services/historyStore');
+const { UserFacingError, toSafeErrorMessage } = require('../services/errors');
 
 let passed = 0;
 async function test(name, fn) {
@@ -339,6 +340,37 @@ await test('page_speed rates a poor LCP/CLS/INP combination as failed with a low
   assert.strictEqual(result.status, 'failed');
   assert.strictEqual(result.score, 0);
   assert.ok(result.message.includes('LCP') && result.message.includes('CLS'));
+});
+
+// --- Never leak a raw system/Node error (regression: "spawn ETXTBSY" reached the
+// client's top-level error banner instead of a clean message) ---
+await test('toSafeErrorMessage shows the message for a deliberately-thrown UserFacingError', () => {
+  const err = new UserFacingError('Geçersiz URL formatı: "not a url"');
+  assert.strictEqual(toSafeErrorMessage(err), 'Geçersiz URL formatı: "not a url"');
+});
+
+await test('toSafeErrorMessage replaces a raw Node/system error (e.g. spawn ETXTBSY) with a generic fallback', () => {
+  const rawErr = new Error('spawn ETXTBSY');
+  const message = toSafeErrorMessage(rawErr, 'Site denetlenirken bir hata oluştu.');
+  assert.strictEqual(message, 'Site denetlenirken bir hata oluştu.');
+  assert.ok(!message.includes('ETXTBSY') && !message.includes('spawn'));
+});
+
+await test('toSafeErrorMessage falls back safely even for a null/undefined error', () => {
+  assert.strictEqual(toSafeErrorMessage(null, 'Bir hata oluştu.'), 'Bir hata oluştu.');
+  assert.strictEqual(toSafeErrorMessage(undefined, 'Bir hata oluştu.'), 'Bir hata oluştu.');
+});
+
+// --- normalizeUrl/crawlSite throw UserFacingError so their messages are always
+// safe to show verbatim, never a raw system error ---
+await test('normalizeUrl throws a UserFacingError (not a bare Error) so its message is always safe to display', () => {
+  try {
+    normalizeUrl('');
+    assert.fail('expected normalizeUrl to throw');
+  } catch (err) {
+    assert.ok(err.userFacing, 'expected err.userFacing to be true');
+    assert.strictEqual(toSafeErrorMessage(err), err.message);
+  }
 });
 
 console.log(`\n${passed} test(s) passed.`);
